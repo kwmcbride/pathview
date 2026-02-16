@@ -115,7 +115,7 @@
 						</div>
 						<div class="example-preview">
 							<img
-								src="{base}/examples/screenshots/{example.basename}-{isDark ? 'dark' : 'light'}.png"
+								src="{base}/examples/{example.basename}-{isDark ? 'dark' : 'light'}.svg"
 								alt="{example.name} preview"
 								onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
 							/>

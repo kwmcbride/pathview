@@ -24,7 +24,7 @@
 
 	// Drag preview - rendered off-screen, used as drag image
 	let dragPreviewNode = $state<NodeTypeDefinition | null>(null);
-	let dragPreviewElement: HTMLDivElement;
+	let dragPreviewElement = $state<HTMLDivElement | undefined>(undefined);
 
 	// Collapsed categories
 	let collapsedCategories = $state<Set<string>>(new Set());
@@ -102,13 +102,10 @@
 			event.dataTransfer.effectAllowed = 'copy';
 
 			// Use the pre-rendered preview as drag image, centered on cursor
-			if (dragPreviewElement) {
-				const rect = dragPreviewElement.getBoundingClientRect();
-				event.dataTransfer.setDragImage(
-					dragPreviewElement,
-					rect.width / 2,
-					rect.height / 2
-				);
+			const previewEl = dragPreviewElement;
+			if (previewEl) {
+				const rect = previewEl.getBoundingClientRect();
+				event.dataTransfer.setDragImage(previewEl, rect.width / 2, rect.height / 2);
 			}
 		}
 	}

@@ -3,6 +3,7 @@
 	import { Handle, Position, useUpdateNodeInternals } from '@xyflow/svelte';
 	import { nodeRegistry, type NodeInstance } from '$lib/nodes';
 	import { getShapeCssClass, isSubsystem } from '$lib/nodes/shapes/index';
+	import { getMask } from '$lib/masks';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { openNodeDialog } from '$lib/stores/nodeDialog';
 	import { graphStore } from '$lib/stores/graph';
@@ -33,6 +34,32 @@
 	// Get type definition
 	const typeDef = $derived(nodeRegistry.get(data.type));
 	const category = $derived(typeDef?.category || 'Algebraic');
+
+	// Mask (UI-only appearance override)
+	const mask = $derived(getMask(data.type));
+	const maskClipPath = $derived(mask?.clipPath);
+	const maskContentPadding = $derived(mask?.contentPadding);
+	const maskSvg = $derived(() => {
+		const m = mask;
+		if (!m?.renderSvg) return null;
+		const ctx = {
+			width: nodeDimensions.width,
+			height: nodeDimensions.height,
+			rotation,
+			node: data,
+			typeDef
+		};
+		try {
+			return m.renderSvg(ctx);
+		} catch (err) {
+			m.onError?.(err, ctx);
+			console.error(`Mask renderSvg failed for type "${data.type}"`, err);
+			return null;
+		}
+	});
+
+	// Helper: read the derived value (Svelte 5 $derived returns an accessor)
+	const maskSvgValue = $derived(() => maskSvg());
 
 	// Get valid pinned params (filter out any that no longer exist in the type definition)
 	// Defined early since it's needed for dimension calculations
@@ -219,8 +246,10 @@
 	);
 
 	// Node dimensions - calculated from shared utility (same as SvelteFlow bounds)
+	// IMPORTANT: instance name can be arbitrarily long; it must NOT affect node size.
+	// Use the stable type name for width/height calculations.
 	const nodeDimensions = $derived(calculateNodeDimensions(
-		data.name,
+		typeDef?.name ?? data.name,
 		data.inputs.length,
 		data.outputs.length,
 		pinnedCount,
@@ -325,9 +354,114 @@
 	const isInterfaceNode = $derived(data.type === NODE_TYPES.INTERFACE);
 	const isSubsystemType = $derived(isSubsystemNode || isInterfaceNode);
 
+	let subtitleInputEl = $state<HTMLInputElement | null>(null);
+	let subtitleTextareaEl = $state<HTMLTextAreaElement | null>(null);
+	let isEditingName = $state(false);
+	let draftName = $state('');
+	let subtitleMeasuredWidthPx = $state<number | null>(null);
+	let subtitleInputHeightPx = $state<number | null>(null);
+
+	function measureSubtitleWidth(text: string): number {
+		// Measure using the same font styles as the subtitle input.
+		const measurer = document.createElement('span');
+		measurer.style.position = 'absolute';
+		measurer.style.visibility = 'hidden';
+		measurer.style.whiteSpace = 'pre';
+		measurer.style.font = "600 10px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+		measurer.style.letterSpacing = '-0.2px';
+		measurer.textContent = text || ' '; // never 0 width
+		document.body.appendChild(measurer);
+		const width = measurer.getBoundingClientRect().width;
+		measurer.remove();
+		// a little padding so characters don't touch edges
+		return Math.ceil(width + 6);
+	}
+
+	function updateSubtitleSizing() {
+		subtitleMeasuredWidthPx = measureSubtitleWidth(draftName);
+		queueMicrotask(() => {
+			if (!subtitleTextareaEl) return;
+			// Auto-grow height to fit content, but avoid extra whitespace.
+			subtitleTextareaEl.style.height = '0px';
+			const styles = getComputedStyle(subtitleTextareaEl);
+			const paddingTop = parseFloat(styles.paddingTop || '0') || 0;
+			const paddingBottom = parseFloat(styles.paddingBottom || '0') || 0;
+			const borderTop = parseFloat(styles.borderTopWidth || '0') || 0;
+			const borderBottom = parseFloat(styles.borderBottomWidth || '0') || 0;
+			const lineHeight = parseFloat(styles.lineHeight || '12') || 12;
+
+			// scrollHeight includes padding; subtract nothing, just clamp to at least one line.
+			const min = Math.ceil(lineHeight + paddingTop + paddingBottom + borderTop + borderBottom);
+			const next = Math.max(min, Math.ceil(subtitleTextareaEl.scrollHeight));
+			subtitleInputHeightPx = next;
+			subtitleTextareaEl.style.height = `${next}px`;
+		});
+	}
+
+	function beginEditName(e?: MouseEvent) {
+		e?.stopPropagation();
+		isEditingName = true;
+		draftName = data.name;
+		updateSubtitleSizing();
+		// focus after DOM updates
+		queueMicrotask(() => {
+			(subtitleTextareaEl ?? (subtitleInputEl as unknown as HTMLInputElement | null))?.focus();
+			if (subtitleTextareaEl) {
+				subtitleTextareaEl.selectionStart = 0;
+				subtitleTextareaEl.selectionEnd = subtitleTextareaEl.value.length;
+			} else {
+				subtitleInputEl?.select();
+			}
+		});
+	}
+
+	function commitEditName() {
+		if (!isEditingName) return;
+		isEditingName = false;
+		const next = draftName.trim();
+		if (next.length === 0 || next === data.name) return;
+		historyStore.mutate(() => graphStore.updateNodeName(id, next));
+	}
+
+	function cancelEditName() {
+		if (!isEditingName) return;
+		isEditingName = false;
+		draftName = data.name;
+		subtitleInputHeightPx = null;
+	}
+
+	function handleNameInputKeydown(e: KeyboardEvent) {
+		// prevent canvas/global shortcuts while typing
+		e.stopPropagation();
+		if (e.key === 'Enter') {
+			// Keep Enter-to-commit.
+			// Optional: Shift+Enter inserts a newline (for wrapped/multi-line titles).
+			if (!e.shiftKey) {
+				e.preventDefault();
+				commitEditName();
+			}
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelEditName();
+		}
+	}
+
+	function handleNameInput(e: Event) {
+		draftName = (e.currentTarget as HTMLTextAreaElement | HTMLInputElement).value;
+		updateSubtitleSizing();
+	}
+
+	// Exit edit mode when deselected
+	$effect(() => {
+		if (!selected) {
+			cancelEditName();
+		}
+	});
+
 	// Handle double-click to open properties dialog or drill into subsystem
 	function handleDoubleClick(event: MouseEvent) {
 		event.stopPropagation();
+		if (isEditingName) return;
 		if (isSubsystemNode) {
 			// Drill down into subsystem
 			graphStore.drillDown(id);
@@ -487,6 +621,7 @@
 		class="node-clip"
 		style:grid-template-columns={gridLayout().columns}
 		style:grid-template-rows={gridLayout().rows}
+		style:clip-path={maskClipPath}
 	>
 		<!-- Input port labels -->
 		{#if hasVisibleInputLabels}
@@ -512,13 +647,18 @@
 		<!-- Inner wrapper for content -->
 		<div class="node-inner" style={gridLayout().innerStyle}>
 			<!-- Node content -->
-			<div class="node-content">
-				{#if renderedNameHtml}
-					<span class="node-name">{@html renderedNameHtml}</span>
-				{:else}
-					<span class="node-name">{data.name}</span>
+			<div
+				class="node-content"
+				style:padding={maskContentPadding}
+			>
+				{#if true}
+					{@const svgVal = maskSvgValue()}
+					{#if typeof svgVal === 'string' && svgVal.length > 0}
+						<div class="node-mask" aria-hidden="true">{@html svgVal}</div>
+					{/if}
 				{/if}
-				{#if typeDef}
+
+				{#if typeDef && !mask}
 					<span class="node-type">{typeDef.name}</span>
 				{/if}
 			</div>
@@ -568,6 +708,33 @@
 					{/each}
 				</div>
 			{/if}
+		{/if}
+	</div>
+
+	<!-- Subtitle: instance name below the node silhouette -->
+	<div class="node-subtitle" aria-hidden={data.name === typeDef?.name}>
+		{#if isEditingName}
+			<textarea
+				class="node-name below node-name-input"
+				bind:this={subtitleTextareaEl}
+				value={draftName}
+				oninput={handleNameInput}
+				onkeydown={handleNameInputKeydown}
+				onblur={commitEditName}
+				onmousedown={(e) => e.stopPropagation()}
+				ondblclick={(e) => e.stopPropagation()}
+				style:height={subtitleInputHeightPx ? `${subtitleInputHeightPx}px` : undefined}
+				use:paramInput
+			></textarea>
+		{:else}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="node-subtitle-display" ondblclick={beginEditName}>
+				{#if renderedNameHtml}
+					<span class="node-name below">{@html renderedNameHtml}</span>
+				{:else}
+					<span class="node-name below">{data.name}</span>
+				{/if}
+			</div>
 		{/if}
 	</div>
 
@@ -696,6 +863,11 @@
 		flex-direction: column;
 	}
 
+	/* If a mask is present, prefer clip-path silhouette over rounded-rect clipping. */
+	.node-clip[style*="clip-path"] {
+		border-radius: 0;
+	}
+
 	/* Inner wrapper for content */
 	.node-inner {
 		flex: 1;
@@ -716,17 +888,22 @@
 		line-height: 1.2;
 		min-width: 0;
 		overflow: hidden;
+		position: relative;
 	}
 
-	.node-name {
-		display: block;
-		font-weight: 600;
-		font-size: 10px;
+	.node-mask {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
 		color: var(--node-color);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		letter-spacing: -0.2px;
+		opacity: 0.95;
+		z-index: 0;
+	}
+
+	.node-name,
+	.node-type {
+		position: relative;
+		z-index: 1;
 	}
 
 	/* KaTeX math rendering in node names */
@@ -753,9 +930,59 @@
 
 	.node-type {
 		display: block;
-		font-size: 8px;
-		color: var(--text-muted);
-		margin-top: 2px;
+		font-size: 10px;
+		font-weight: 700;
+		color: var(--node-color);
+		letter-spacing: -0.2px;
+	}
+
+	.node-subtitle {
+		position: absolute;
+		left: 50%;
+		top: 100%;
+		transform: translateX(-50%);
+		margin-top: 4px;
+		/* Can be a bit wider than the node, but must never affect node layout */
+		width: calc(100% + 24px);
+		max-width: calc(100% + 24px);
+		overflow: visible;
+		pointer-events: none;
+		text-align: center;
+	}
+
+	.node-subtitle-display {
+		pointer-events: auto;
+		width: 100%;
+	}
+
+	.node-name-input {
+		background: transparent;
+		border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+		outline: none;
+		padding: 2px 6px;
+		margin: 0;
+		text-align: center;
+		/* Constrain to subtitle width */
+		width: 100%;
+		max-width: 100%;
+		box-sizing: border-box;
+		color: inherit;
+		font: inherit;
+		letter-spacing: inherit;
+		resize: none;
+		/* Prefer auto-grow; no scrollbars unless something goes wrong */
+		overflow: hidden;
+		line-height: 1.1;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--surface-raised) 70%, transparent);
+	}
+
+	.node-name-input:focus {
+		border-color: var(--node-color);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-color) 18%, transparent);
 	}
 
 	/* Pinned parameters - rectangular, clipped by node-clip's overflow:hidden */
