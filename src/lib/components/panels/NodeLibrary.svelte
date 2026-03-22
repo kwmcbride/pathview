@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { nodeRegistry, blockConfig, type NodeCategory, type NodeTypeDefinition } from '$lib/nodes';
+	import { isAcausalJunctionNodeType } from '$lib/nodes/registry';
+	import { acausalBlockConfig } from '$lib/nodes/generated/acausal-blocks';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import NodePreview from '$lib/components/nodes/NodePreview.svelte';
 	import Icon from '$lib/components/icons/Icon.svelte';
@@ -38,9 +40,12 @@
 		}
 	}
 
-	// Category order derived from blockConfig (source of truth)
-	// Add Subsystem at end since it's registered separately
-	const categoryOrder: NodeCategory[] = [...Object.keys(blockConfig) as NodeCategory[], 'Subsystem'];
+	// Category order: causal blocks first, then acausal domains, then Subsystem
+	const categoryOrder: NodeCategory[] = [
+		...Object.keys(blockConfig) as NodeCategory[],
+		...Object.keys(acausalBlockConfig) as NodeCategory[],
+		'Subsystem'
+	];
 
 	// Get all node types
 	const nodeTypes = nodeRegistry.getAll();
@@ -49,7 +54,9 @@
 	// Interface is NEVER shown in library - it's auto-created inside subsystems
 	const filteredNodes = $derived(() => {
 		// Always hide Interface block - it's auto-created inside subsystems
-		let nodes = nodeTypes.filter((node) => node.type !== NODE_TYPES.INTERFACE);
+		let nodes = nodeTypes.filter(
+			(node) => node.type !== NODE_TYPES.INTERFACE && !isAcausalJunctionNodeType(node.type)
+		);
 
 		if (!searchQuery.trim()) return nodes;
 		const query = searchQuery.toLowerCase();

@@ -78,6 +78,10 @@ export interface ValidationResult {
 	errors: ValidationError[];
 }
 
+interface RunStreamingOptions {
+	forceReinitialize?: boolean;
+}
+
 // Simulation phases for UI state management
 export type SimulationPhase = 'idle' | 'starting' | 'running' | 'complete' | 'error';
 
@@ -298,8 +302,15 @@ async function runStreamingLoop(
 export async function runStreamingSimulation(
 	code: string,
 	duration: string,
-	onUpdate?: (result: SimulationResult) => void
+	onUpdate?: (result: SimulationResult) => void,
+	streamingStartCode?: string,
+	options: RunStreamingOptions = {}
 ): Promise<SimulationResult | null> {
+	if (options.forceReinitialize) {
+		terminateRepl();
+		helpersInjected = false;
+	}
+
 	// Ensure initialized
 	const state = get(replState);
 	if (!state.initialized) {
@@ -332,7 +343,7 @@ export async function runStreamingSimulation(
 		await exec(wrappedCode);
 
 		// Start streaming generator with optimized tickrate
-		await exec(generateStreamingStartCode(duration, STREAMING_TICKRATE));
+		await exec(streamingStartCode ?? generateStreamingStartCode(duration, STREAMING_TICKRATE));
 
 		// Update phase to running
 		simulationState.update((s) => ({ ...s, phase: 'running' }));

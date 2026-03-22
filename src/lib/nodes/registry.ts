@@ -6,7 +6,15 @@
 import type { NodeTypeDefinition, NodeCategory, ParamDefinition, ParamType } from './types';
 import { defineNode } from './defineNode';
 import { extractedBlocks, blockConfig, type ExtractedBlock } from './generated/blocks';
+import { acausalBlocks, acausalBlockConfig, type AcausalBlock } from './generated/acausal-blocks';
 import { syncPortBlocks } from './uiConfig';
+import { ACAUSAL_DOMAIN_COLORS } from '$lib/utils/colors';
+
+const ACAUSAL_JUNCTION_TYPES: Record<string, string> = {
+	electrical: 'ElectricalJunction',
+	gas: 'GasJunction',
+	gas_stream: 'GasStreamJunction'
+};
 
 class NodeRegistry {
 	private nodes: Map<string, NodeTypeDefinition> = new Map();
@@ -180,5 +188,146 @@ function initializeRegistry(): void {
 	}
 }
 
+/**
+ * Convert an acausal block descriptor to a NodeTypeDefinition.
+ *
+ * Acausal nodes store all their ports in the `inputs` array with
+ * direction: 'acausal'. The `outputs` array is always empty.
+ * For variable-port components the port count is controlled by a
+ * parameter (e.g. n_ports); the UI will add/remove ports as the
+ * param changes (similar to Adder's operations param).
+ */
+function createAcausalNodeFromExtracted(
+	name: string,
+	category: NodeCategory,
+	block: AcausalBlock
+): void {
+	const domainColor = ACAUSAL_DOMAIN_COLORS[block.domain] ?? ACAUSAL_DOMAIN_COLORS.default;
+
+	// Build param definitions (reuse the same shape as causal params)
+	const params: Record<
+		string,
+		{ type: ParamType; default: unknown; description?: string; min?: number; max?: number; options?: string[] }
+	> = {};
+
+	for (const [paramName, paramInfo] of Object.entries(block.params)) {
+		params[paramName] = {
+			type: paramInfo.type as ParamType,
+			default: paramInfo.default,
+			description: paramInfo.description
+		};
+	}
+
+	// All ports are acausal — stored in the inputs array
+	const isVariable = !!block.variablePorts;
+	const fixedPortCount = block.ports.length;
+
+	const definition = defineNode({
+		name,
+		category,
+		blockClass: block.blockClass,
+		description: block.description,
+		// Acausal ports: listed as inputs with acausal direction marker names.
+		// We use port names from the block definition.
+		inputs: block.ports.map((p) => p.name),
+		outputs: [],
+		minInputs: isVariable ? 2 : fixedPortCount,
+		maxInputs: isVariable ? null : fixedPortCount,
+		minOutputs: 0,
+		maxOutputs: 0,
+		params
+	});
+
+	// Stamp domain color and acausal domain onto the definition
+	definition.color = domainColor;
+	definition.acausalDomain = block.domain;
+
+	// Override port directions to 'acausal' and stamp domain color
+	for (const port of definition.ports.inputs) {
+		(port as { direction: string; color: string; domain: string }).direction = 'acausal';
+		port.color = domainColor;
+		port.domain = block.domain;
+	}
+
+	if (block.docstringHtml) {
+		definition.docstring = block.docstringHtml;
+	}
+
+	nodeRegistry.register(definition);
+}
+
+/**
+ * Initialize registry with all acausal components
+ */
+function initializeAcausalRegistry(): void {
+	for (const [category, blockNames] of Object.entries(acausalBlockConfig)) {
+		for (const blockName of blockNames) {
+			const block = acausalBlocks[blockName as keyof typeof acausalBlocks];
+
+			if (block) {
+				createAcausalNodeFromExtracted(blockName, category as NodeCategory, block);
+			} else {
+				console.warn(`Acausal block "${blockName}" not found in acausal-blocks`);
+			}
+		}
+	}
+}
+
+function registerAcausalJunctionNodes(): void {
+	const junctionDefs: Array<{ domain: string; category: NodeCategory }> = [
+		{ domain: 'electrical', category: 'Electrical' },
+		{ domain: 'gas', category: 'Gas' },
+		{ domain: 'gas_stream', category: 'GasStream' }
+	];
+
+	for (const { domain, category } of junctionDefs) {
+		const type = ACAUSAL_JUNCTION_TYPES[domain];
+		const domainColor = ACAUSAL_DOMAIN_COLORS[domain] ?? ACAUSAL_DOMAIN_COLORS.default;
+		const definition = defineNode({
+			name: 'Junction',
+			category,
+			blockClass: type,
+			description: 'Editor-side acausal junction used to branch physical connections.',
+			inputs: ['p1', 'p2', 'p3', 'p4'],
+			outputs: [],
+			minInputs: 4,
+			maxInputs: 4,
+			minOutputs: 0,
+			maxOutputs: 0,
+			shape: 'circle',
+			params: {}
+		});
+
+		definition.color = domainColor;
+		definition.acausalDomain = domain;
+
+		for (const port of definition.ports.inputs) {
+			(port as { direction: string; color: string; domain: string }).direction = 'acausal';
+			port.color = domainColor;
+			port.domain = domain;
+		}
+
+		nodeRegistry.register(definition);
+	}
+}
+
 // Initialize on module load
 initializeRegistry();
+initializeAcausalRegistry();
+registerAcausalJunctionNodes();
+
+/**
+ * Returns true if a node type is an acausal physical component.
+ */
+export function isAcausalNodeType(type: string): boolean {
+	const def = nodeRegistry.get(type);
+	return !!def?.acausalDomain;
+}
+
+export function isAcausalJunctionNodeType(type: string): boolean {
+	return Object.values(ACAUSAL_JUNCTION_TYPES).includes(type);
+}
+
+export function getAcausalJunctionType(domain: string): string | null {
+	return ACAUSAL_JUNCTION_TYPES[domain] ?? null;
+}

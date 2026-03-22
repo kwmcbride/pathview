@@ -35,7 +35,9 @@ export {
 // Re-export all utilities
 export {
 	registerScreenToFlowConverter,
+	registerFlowToScreenConverter,
 	screenToFlow,
+	flowToScreen,
 	registerHasSelection,
 	hasAnySelection,
 	getViewportCenter

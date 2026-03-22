@@ -17,6 +17,7 @@ import { getHandlePath } from '$lib/constants/handlePaths';
 import { portLabelsStore } from '$lib/stores/portLabels';
 import { getEffectivePortLabelVisibility, truncatePortLabel } from '$lib/utils/portLabels';
 import { latexToSvg, getSvgDimensions, preloadMathJax } from '$lib/utils/mathjaxSvg';
+import { isAcausalJunctionNodeType, nodeRegistry } from '$lib/nodes/registry';
 
 // Preload MathJax when module loads
 if (typeof window !== 'undefined') {
@@ -232,6 +233,29 @@ function renderPortLabels(
 	const { inputs: hasInputLabels, outputs: hasOutputLabels } = getEffectivePortLabelVisibility(node, globalShowLabels);
 	if (!hasInputLabels && !hasOutputLabels) {
 		return { svg: '', inputOffset: 0, outputOffset: 0 };
+	}
+
+	const isAcausal = !!nodeRegistry.get(node.type)?.acausalDomain;
+	const useInBoxAcausalLabels = isAcausal && !isAcausalJunctionNodeType(node.type);
+	if (useInBoxAcausalLabels) {
+		const parts: string[] = [];
+		const leftPortCount = node.inputs.filter((_, i) => i % 2 === 0).length;
+		const rightPortCount = node.inputs.length - leftPortCount;
+
+		for (let i = 0; i < node.inputs.length; i++) {
+			const isLeft = i % 2 === 0;
+			const sideIndex = Math.floor(i / 2);
+			const sideTotal = isLeft ? leftPortCount : rightPortCount;
+			const labelY = y + height / 2 + getPortOffset(sideIndex, sideTotal);
+			const textAnchor = isLeft ? 'end' : 'start';
+			const textX = isLeft ? x + 28 : x + width - 28;
+			const label = truncatePortLabel(node.inputs[i].name);
+			parts.push(
+				`<text x="${textX}" y="${labelY}" text-anchor="${textAnchor}" dominant-baseline="middle" fill="${ctx.theme.textMuted}" font-size="8" font-family="system-ui, -apple-system, sans-serif">${escapeXml(label)}</text>`
+			);
+		}
+
+		return { svg: parts.join('\n'), inputOffset: 0, outputOffset: 0 };
 	}
 
 	const parts: string[] = [];

@@ -10,6 +10,7 @@
 	import CodePreviewDialog from '$lib/components/dialogs/CodePreviewDialog.svelte';
 	import { codePreviewStore } from '$lib/stores/codePreview';
 	import PlotPanel from '$lib/components/panels/PlotPanel.svelte';
+	import AcausalResultsPanel from '$lib/components/panels/AcausalResultsPanel.svelte';
 	import ConsolePanel from '$lib/components/panels/ConsolePanel.svelte';
 	import CodeEditor from '$lib/components/panels/CodeEditor.svelte';
 	import NodeLibrary from '$lib/components/panels/NodeLibrary.svelte';
@@ -82,6 +83,7 @@
 	let showNodeLibrary = $state(false);
 	let showEventsPanel = $state(false);
 	let showCodeEditor = $state(false);
+	let showAcausalResults = $state(false);
 	let showPlot = $state(false);
 	let showConsole = $state(false);
 	let plotPanelHeight = $state(280);
@@ -112,6 +114,7 @@
 	let nodeLibraryWidth = $state(320);
 	let eventsPanelWidth = $state(280);
 	let codeEditorWidth = $state(400);
+	let acausalResultsWidth = $state(560);
 	const propertiesPanelWidth = 310; // Fixed width, not resizable
 
 	// Track window size for fitView padding calculation
@@ -223,6 +226,7 @@
 			showProperties = false;
 		} else {
 			showCodeEditor = false;
+			showAcausalResults = false;
 			showProperties = true;
 		}
 	}
@@ -233,9 +237,20 @@
 			showCodeEditor = false;
 		} else {
 			showProperties = false;
+			showAcausalResults = false;
 			showCodeEditor = true;
 			// Focus editor after it mounts
 			setTimeout(() => codeEditorRef?.focus(), 50);
+		}
+	}
+
+	function toggleAcausalResults() {
+		if (showAcausalResults) {
+			showAcausalResults = false;
+		} else {
+			showProperties = false;
+			showCodeEditor = false;
+			showAcausalResults = true;
 		}
 	}
 
@@ -258,6 +273,7 @@
 		const _nlw = nodeLibraryWidth;
 		const _epw = eventsPanelWidth;
 		const _cew = codeEditorWidth;
+		const _arw = acausalResultsWidth;
 
 		// Calculate pixel offsets for each side
 		// Left panels: Block Library or Events (only one can be open at a time)
@@ -265,7 +281,11 @@
 		const leftPx = PANEL_TOGGLES_WIDTH + PANEL_GAP + (leftPanelWidth > 0 ? leftPanelWidth + PANEL_GAP : 0);
 
 		// Right panels: Code Editor or Simulation (Properties)
-		const rightPanelWidth = showCodeEditor ? codeEditorWidth : showProperties ? propertiesPanelWidth : 0;
+		const rightPanelWidth = showCodeEditor
+			? codeEditorWidth
+			: showProperties
+				? propertiesPanelWidth
+				: 0;
 		const rightPx = (rightPanelWidth > 0 ? rightPanelWidth + PANEL_GAP : 0) + 20; // 20px extra buffer
 
 		// Bottom panels: Plot and Console - only use heights of panels that are actually open
@@ -377,6 +397,8 @@
 	let plotViewMode = $state<'tabs' | 'tiles'>('tabs');
 	let resultPlots = $state<{ id: string; type: 'scope' | 'spectrum'; title: string }[]>([]);
 	let resultTraces = $state<{ nodeId: string; nodeType: 'scope' | 'spectrum'; nodeName: string; signalIndex: number; signalLabel: string }[]>([]);
+	let hasAcausalResults = $state(false);
+	let acausalSignalCount = $state(0);
 
 	// Tooltip for continue button - simple, disabled state shows availability
 	const continueTooltip = { text: "Continue", shortcut: "Shift+Enter" };
@@ -431,8 +453,12 @@
 			// Derive plots and traces from result (use nodeNames from simulation result for subsystem support)
 			const plots: { id: string; type: 'scope' | 'spectrum'; title: string }[] = [];
 			const traces: typeof resultTraces = [];
+			const acausalScope = s.result?.scopeData?._acausal_net;
+			hasAcausalResults = !!(acausalScope && acausalScope.signals.length > 0);
+			acausalSignalCount = acausalScope?.signals.length ?? 0;
 			if (s.result?.scopeData) {
 				Object.entries(s.result.scopeData).forEach(([id, data], index) => {
+					if (id === '_acausal_net') return;
 					const title = s.result?.nodeNames?.[id] || `Scope ${index + 1}`;
 					plots.push({ id, type: 'scope', title });
 					// Add traces for each signal in this scope
@@ -1118,6 +1144,15 @@
 			</button>
 			<button
 				class="toggle-btn"
+				class:active={showAcausalResults}
+				onclick={toggleAcausalResults}
+				use:tooltip={{ text: hasAcausalResults ? `Acausal Browser (${acausalSignalCount} signals)` : 'Acausal Browser', position: "right" }}
+				aria-label="Acausal Browser"
+			>
+				<Icon name="layers" size={18} />
+			</button>
+			<button
+				class="toggle-btn"
 				class:active={showConsole}
 				onclick={() => showConsole = !showConsole}
 				use:tooltip={{ text: "Console", shortcut: "C", position: "right" }}
@@ -1231,6 +1266,25 @@
 		</ResizablePanel>
 	{/if}
 
+	<!-- Acausal Results Browser (right) -->
+	{#if showAcausalResults}
+		<ResizablePanel
+			position="right"
+			width={acausalResultsWidth}
+			initialHeight={520}
+			minWidth={420}
+			minHeight={260}
+			maxWidth={1400}
+			bottomOffset={rightPanelBottomOffset()}
+			draggable={true}
+			title="Acausal Browser"
+			onClose={() => showAcausalResults = false}
+			onWidthChange={(w) => acausalResultsWidth = Math.min(1400, Math.max(420, w))}
+		>
+			<AcausalResultsPanel />
+		</ResizablePanel>
+	{/if}
+
 	<!-- Plot Panel (floating bottom) -->
 	{#if showPlot}
 		<ResizablePanel
@@ -1267,6 +1321,17 @@
 				{/if}
 			{/snippet}
 			{#snippet actions()}
+				{#if hasAcausalResults}
+					<button
+						class="icon-btn ghost"
+						class:active={showAcausalResults}
+						onclick={toggleAcausalResults}
+						use:tooltip={{ text: hasAcausalResults ? `Open acausal browser (${acausalSignalCount} signals)` : 'Open acausal browser', position: 'bottom' }}
+						aria-label="Open acausal browser"
+					>
+						<Icon name="layers" size={16} />
+					</button>
+				{/if}
 				{#if resultPlots.length > 1}
 					<button
 						class="icon-btn ghost"
@@ -1615,4 +1680,5 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
+
 </style>

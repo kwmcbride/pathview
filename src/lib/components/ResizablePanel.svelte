@@ -19,6 +19,9 @@
 		currentHeight?: number;
 		width?: number; // Controlled width (for bottom-left/bottom-right)
 		onWidthChange?: (width: number) => void;
+		draggable?: boolean;
+		initialOffsetX?: number;
+		initialOffsetY?: number;
 		title?: string;
 		onClose: () => void;
 		header?: import('svelte').Snippet;
@@ -40,6 +43,9 @@
 		currentHeight = $bindable(280),
 		width: controlledWidth,
 		onWidthChange,
+		draggable = false,
+		initialOffsetX = 0,
+		initialOffsetY = 0,
 		title,
 		onClose,
 		header,
@@ -58,12 +64,15 @@
 		if (position.includes('bottom')) {
 			return window.innerHeight - NAV_HEIGHT - PANEL_GAP * 2;
 		}
-		return 600; // Default for side panels
+		return window.innerHeight - NAV_HEIGHT - PANEL_GAP * 2 - bottomOffset;
 	}
 
 	// Internal state for dimensions (untrack since we intentionally only use initial values)
 	let internalWidth = $state(untrack(() => initialWidth));
 	let height = $state(untrack(() => initialHeight));
+	let dragOffsetX = $state(untrack(() => initialOffsetX));
+	let dragOffsetY = $state(untrack(() => initialOffsetY));
+	let panelElement = $state<HTMLElement | null>(null);
 
 	// Effective width - controlled externally or internal
 	function getWidth() {
@@ -83,6 +92,7 @@
 		currentHeight = height;
 	});
 	let isResizing = $state(false);
+	let isDragging = $state(false);
 	let resizeEdge = $state<'left' | 'right' | 'top' | 'bottom' | null>(null);
 
 	// Compute max-height reactively based on bottomOffset
@@ -119,9 +129,16 @@
 	// Track active resize cleanup for component destroy
 	let activeCleanup: (() => void) | null = null;
 
+	function clamp(value: number, min: number, max: number): number {
+		if (max < min) return min;
+		return Math.min(max, Math.max(min, value));
+	}
+
 	function startResize(edge: 'left' | 'right' | 'top' | 'bottom') {
 		return (event: MouseEvent) => {
 			event.preventDefault();
+			event.stopPropagation();
+			activeCleanup?.();
 			isResizing = true;
 			resizeEdge = edge;
 
@@ -170,6 +187,56 @@
 		};
 	}
 
+	function startDrag(event: MouseEvent) {
+		if (!draggable || event.button !== 0 || !panelElement) return;
+		const target = event.target as HTMLElement | null;
+		if (target?.closest('button, input, select, textarea, a, .header-actions')) return;
+
+		event.preventDefault();
+		event.stopPropagation();
+		activeCleanup?.();
+		isDragging = true;
+
+		const startX = event.clientX;
+		const startY = event.clientY;
+		const startOffsetX = dragOffsetX;
+		const startOffsetY = dragOffsetY;
+		const startRect = panelElement.getBoundingClientRect();
+
+		function onMouseMove(e: MouseEvent) {
+			if (!isDragging) return;
+
+			const rawLeft = startRect.left + (e.clientX - startX);
+			const rawTop = startRect.top + (e.clientY - startY);
+			const minLeft = PANEL_GAP;
+			const maxLeft = window.innerWidth - startRect.width - PANEL_GAP;
+			const minTop = NAV_HEIGHT + PANEL_GAP;
+			const maxTop = window.innerHeight - startRect.height - PANEL_GAP;
+			const clampedLeft = clamp(rawLeft, minLeft, maxLeft);
+			const clampedTop = clamp(rawTop, minTop, maxTop);
+
+			dragOffsetX = startOffsetX + (clampedLeft - startRect.left);
+			dragOffsetY = startOffsetY + (clampedTop - startRect.top);
+		}
+
+		function cleanup() {
+			document.removeEventListener('mousemove', onMouseMove);
+			document.removeEventListener('mouseup', onMouseUp);
+			document.body.classList.remove('dragging-panel');
+			activeCleanup = null;
+		}
+
+		function onMouseUp() {
+			isDragging = false;
+			cleanup();
+		}
+
+		activeCleanup = cleanup;
+		document.addEventListener('mousemove', onMouseMove);
+		document.addEventListener('mouseup', onMouseUp);
+		document.body.classList.add('dragging-panel');
+	}
+
 	onDestroy(() => {
 		activeCleanup?.();
 	});
@@ -177,12 +244,16 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
 <aside
+	bind:this={panelElement}
 	class="resizable-panel glass-panel {position}"
 	class:resizing={isResizing}
+	class:draggable={draggable}
+	class:dragging={isDragging}
 	style="
 		{position === 'left' || position === 'right' ? `width: ${getWidth()}px;` : ''}
 		{(position === 'bottom-left' || position === 'bottom-right') && controlledWidth !== undefined ? `width: ${getWidth()}px;` : ''}
-		{position.includes('bottom') ? `height: ${height}px;` : ''}
+		{position.includes('bottom') || draggable ? `height: ${height}px;` : ''}
+		transform: translate(${dragOffsetX}px, ${dragOffsetY}px);
 		{maxHeightStyle}
 	"
 	transition:fly={{ ...transition(), duration: 200, easing: cubicOut }}
@@ -206,7 +277,7 @@
 		<div class="resize-handle handle-bottom" onmousedown={startResize('bottom')}></div>
 	{/if}
 
-	<div class="panel-header">
+	<div class="panel-header" onmousedown={startDrag}>
 		{#if header}
 			{@render header()}
 		{:else}
@@ -247,6 +318,10 @@
 	}
 
 	.resizable-panel.resizing {
+		transition: none;
+	}
+
+	.resizable-panel.dragging {
 		transition: none;
 	}
 
@@ -335,6 +410,14 @@
 		flex-shrink: 0;
 	}
 
+	.resizable-panel.draggable .panel-header {
+		cursor: grab;
+	}
+
+	.resizable-panel.dragging .panel-header {
+		cursor: grabbing;
+	}
+
 	.panel-toolbar {
 		flex-shrink: 0;
 		border-bottom: 1px solid var(--border);
@@ -362,4 +445,8 @@
 	}
 
 	/* Uses global .icon-btn from app.css */
+
+	:global(body.dragging-panel) {
+		user-select: none;
+	}
 </style>

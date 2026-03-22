@@ -6,6 +6,7 @@
  */
 
 import type { NodeInstance } from '$lib/types/nodes';
+import { isAcausalJunctionNodeType, nodeRegistry } from '$lib/nodes/registry';
 
 /**
  * Get effective port label visibility for a node.
@@ -19,6 +20,15 @@ export function getEffectivePortLabelVisibility(
 	node: NodeInstance,
 	globalShowLabels: boolean
 ): { inputs: boolean; outputs: boolean } {
+	const isAcausal = !!nodeRegistry.get(node.type)?.acausalDomain;
+	const forceAcausalLabels = isAcausal && !isAcausalJunctionNodeType(node.type);
+	if (forceAcausalLabels) {
+		return {
+			inputs: node.inputs.length > 0,
+			outputs: node.outputs.length > 0
+		};
+	}
+
 	// Per-node overrides (undefined = follow global)
 	const inputSetting = (node.params?.['_showInputLabels'] as boolean | undefined) ?? globalShowLabels;
 	const outputSetting = (node.params?.['_showOutputLabels'] as boolean | undefined) ?? globalShowLabels;

@@ -6,4 +6,5 @@
 --pre
 
 pathsim
+sympy>=1.12
 pathsim-chem>=0.2rc2  # optional

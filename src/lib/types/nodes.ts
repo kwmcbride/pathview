@@ -6,13 +6,14 @@ import type { Position } from './common';
 import type { EventInstance } from './events';
 
 /** Port direction */
-export type PortDirection = 'input' | 'output';
+export type PortDirection = 'input' | 'output' | 'acausal';
 
 /** Port definition for a node type (static metadata) */
 export interface PortDefinition {
 	name: string;
 	direction: PortDirection;
 	color?: string;
+	domain?: string; // For acausal ports: 'electrical' | 'gas' | 'gas_stream'
 }
 
 /** Port instance on a node (runtime) */
@@ -46,7 +47,10 @@ export type NodeCategory =
 	| 'Algebraic'
 	| 'Mixed'
 	| 'Recording'
-	| 'Subsystem';
+	| 'Subsystem'
+	| 'Electrical'
+	| 'Gas'
+	| 'GasStream';
 
 /** Node shape override (defaults based on category if not specified) */
 export type NodeShape = 'pill' | 'rect' | 'circle' | 'diamond';
@@ -81,6 +85,9 @@ export interface NodeTypeDefinition {
 
 	// Shape override (defaults based on category if not specified)
 	shape?: NodeShape;
+
+	// Set for acausal nodes — identifies physical domain ('electrical' | 'gas' | 'gas_stream' | ...)
+	acausalDomain?: string;
 }
 
 /** Subsystem's internal graph (nested structure) */
@@ -133,6 +140,8 @@ export interface Connection {
 	targetNodeId: string;
 	targetPortIndex: number;
 	waypoints?: Waypoint[]; // Optional - empty/undefined means auto-route entire path
+	kind?: 'causal' | 'acausal'; // undefined = causal (backward compatible)
+	domain?: string; // For acausal connections: 'electrical' | 'gas' | 'gas_stream' | ...
 }
 
 /** Canvas annotation (markdown/LaTeX text) */

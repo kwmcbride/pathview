@@ -24,6 +24,7 @@ import {
 } from './state';
 import { regenerateGraphIds, createPorts } from './helpers';
 import { syncPortNamesFromLabels } from './ports';
+import { collapseTrivialAcausalJunctions } from './connections';
 import { triggerSelectNodes } from '$lib/stores/viewActions';
 import { getPortLabelConfigs } from '$lib/nodes/uiConfig';
 
@@ -45,7 +46,8 @@ export function addNode(
 	const node: NodeInstance = {
 		id,
 		type,
-		name: name || typeDef.name,
+		name: name ?? typeDef.name,
+		color: typeDef.color,
 		position,
 		inputs: createPorts(id, 'input', typeDef.ports.inputs),
 		outputs: createPorts(id, 'output', typeDef.ports.outputs),
@@ -89,18 +91,18 @@ export function removeNode(id: string): void {
 		return;
 	}
 
-	// Remove node and its connections
+	const remainingNodes = new Map(currentGraph.nodes);
+	remainingNodes.delete(id);
+	const remainingConnections = currentGraph.connections.filter(
+		(c) => c.sourceNodeId !== id && c.targetNodeId !== id
+	);
+	const collapsed = collapseTrivialAcausalJunctions(remainingNodes, remainingConnections);
+
+	// Remove node, its connections, and any trivial junctions exposed by that removal
 	updateCurrentNodesAndConnections(
-		// Map updater for nodes (root)
-		nodes => {
-			const newMap = new Map(nodes);
-			newMap.delete(id);
-			return newMap;
-		},
-		// Array updater for nodes (subsystem)
-		nodes => nodes.filter(n => n.id !== id),
-		// Connection updater (same for both levels)
-		conns => conns.filter(c => c.sourceNodeId !== id && c.targetNodeId !== id)
+		() => collapsed.nodes,
+		nodes => nodes.filter(n => n.id !== id && !collapsed.collapsedJunctionIds.has(n.id)),
+		() => collapsed.connections
 	);
 
 	selectedNodeIds.update(ids => {

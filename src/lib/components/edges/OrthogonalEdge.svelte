@@ -191,9 +191,11 @@
 	});
 
 	const isHighlighted = $derived(() => isHoverHighlighted() || isSelectionHighlighted());
+	const SELECTED_EDGE_COLOR = '#4da3ff';
+	const HOVER_EDGE_COLOR = '#ffb347';
 
 	const highlightColor = $derived(() => {
-		if (isHoverHighlighted()) return hovered?.color || 'var(--accent)';
+		if (isHoverHighlighted()) return HOVER_EDGE_COLOR;
 		if (isSelectionHighlighted()) return selectedNode?.color || 'var(--accent)';
 		return 'var(--accent)';
 	});
@@ -521,7 +523,7 @@
 	});
 </script>
 
-<g class:highlighted={isHighlighted()} style="--highlight-color: {highlightColor()}">
+<g class:selected class:highlighted={isHighlighted()} style="--highlight-color: {highlightColor()}; --selected-edge-color: {SELECTED_EDGE_COLOR};">
 	<BaseEdge {id} path={pathInfo().path} {style} />
 
 	<!-- User waypoint markers (always in DOM, visibility controlled by derived state) -->
@@ -577,8 +579,8 @@
 	}
 
 	.edge-arrow.selected {
-		fill: var(--accent);
-		transform: scale(1.3);
+		fill: var(--selected-edge-color, #4da3ff);
+		transform: scale(1.4);
 	}
 
 	.edge-arrow.highlighted {
@@ -590,6 +592,12 @@
 	}
 
 	/* Highlight the edge path when handle is hovered */
+	.selected :global(.svelte-flow__edge-path) {
+		stroke: var(--selected-edge-color, #4da3ff) !important;
+		stroke-width: 3.25 !important;
+		filter: drop-shadow(0 0 6px var(--selected-edge-color, #4da3ff));
+	}
+
 	.highlighted :global(.svelte-flow__edge-path) {
 		stroke: var(--highlight-color, var(--accent)) !important;
 	}

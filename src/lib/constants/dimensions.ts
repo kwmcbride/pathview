@@ -29,6 +29,18 @@ export const HANDLE = {
 	hollowInset: 1.5
 } as const;
 
+/** Editor junction dimensions */
+export const JUNCTION = {
+	/** Grid-aligned bounding box so cardinal ports land on the canvas grid */
+	size: G.x2,
+	/** Visible branch dot rendered inside the bounding box */
+	dotSize: 12,
+	/** Inset from the node bounds so wire anchors land on the visible dot edge */
+	anchorInset: 4,
+	/** Hidden handle size retained for SvelteFlow edge anchoring */
+	handleSize: 6
+} as const;
+
 /** Event node dimensions (grid-aligned) */
 export const EVENT = {
 	/** Total bounding box size: 8 grid units = 80px */

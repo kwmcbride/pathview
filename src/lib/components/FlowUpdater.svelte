@@ -6,7 +6,7 @@
 	import { historyStore } from '$lib/stores/history';
 	import { eventRegistry } from '$lib/events/registry';
 	import type { EventInstance } from '$lib/events/types';
-	import { fitViewTrigger, fitViewPadding, type FitViewPadding, zoomInTrigger, zoomOutTrigger, panTrigger, focusNodeTrigger, registerScreenToFlowConverter, flyInAnimationTrigger } from '$lib/stores/viewActions';
+	import { fitViewTrigger, fitViewPadding, type FitViewPadding, zoomInTrigger, zoomOutTrigger, panTrigger, focusNodeTrigger, registerScreenToFlowConverter, registerFlowToScreenConverter, flyInAnimationTrigger } from '$lib/stores/viewActions';
 	import { get } from 'svelte/store';
 	import { dropTargetBridge } from '$lib/stores/dropTargetBridge';
 	import { assemblyAnimationTrigger, runAssemblyAnimation } from '$lib/animation/assemblyAnimation';
@@ -23,7 +23,7 @@
 
 	let { pendingUpdates, onUpdatesProcessed, edges = [] }: Props = $props();
 
-	const { getNodes, getEdges, fitView, zoomIn, zoomOut, getViewport, setViewport, screenToFlowPosition } = useSvelteFlow();
+	const { getNodes, getEdges, fitView, zoomIn, zoomOut, getViewport, setViewport, screenToFlowPosition, flowToScreenPosition } = useSvelteFlow();
 	const updateNodeInternals = useUpdateNodeInternals();
 
 	// Custom fit view that accounts for asymmetric panel padding
@@ -100,6 +100,7 @@
 
 		// Register screen-to-flow coordinate converter for use outside SvelteFlow context
 		registerScreenToFlowConverter(screenToFlowPosition);
+		registerFlowToScreenConverter(flowToScreenPosition);
 
 		// Register drop handler that has access to screenToFlowPosition
 		dropTargetBridge.registerDropHandler(async (event: DragEvent) => {

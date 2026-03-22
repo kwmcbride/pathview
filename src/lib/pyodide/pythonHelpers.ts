@@ -255,6 +255,84 @@ _sim_streaming = True
 }
 
 /**
+ * Generate streaming start code for acausal simulations.
+ * Reads from _acausal_sys (CompiledAcausalSystem) outputs instead of Scope blocks.
+ */
+export function generateAcausalStreamingStartCode(duration: string, tickrate: number = 10, reset: boolean = true): string {
+	return `
+def _extract_acausal_incremental():
+    scope = getattr(sim, '_acausal_scope', None)
+    signal_names = list(getattr(sim, '_acausal_signal_names', []))
+    recorded_names = list(getattr(sim, '_acausal_recorded_signal_names', signal_names))
+    if not signal_names:
+        signal_names = recorded_names
+    if scope is None:
+        return {
+            'scopeData': {},
+            'spectrumData': {},
+            'nodeNames': _node_name_map if '_node_name_map' in globals() else {}
+        }
+    time_arr, recorded_data = scope.read(incremental=True)
+    if time_arr is None or recorded_data is None:
+        return {
+            'scopeData': {},
+            'spectrumData': {},
+            'nodeNames': _node_name_map if '_node_name_map' in globals() else {}
+        }
+
+    recorded = {
+        name: np.asarray(recorded_data[i], dtype=float)
+        for i, name in enumerate(recorded_names)
+    }
+
+    missing_names = list(getattr(sim, '_acausal_missing_signal_names', []))
+    missing_func = getattr(sim, '_acausal_missing_signal_func', None)
+    if missing_names and missing_func is not None:
+        state_names = list(getattr(sim, '_acausal_state_names', []))
+        all_names = list(getattr(sim, '_acausal_all_symbol_names', []))
+        input_funcs = list(getattr(sim, '_acausal_input_funcs', []))
+        missing_data = np.empty((len(missing_names), len(time_arr)), dtype=float)
+        for j, t in enumerate(time_arr):
+            x = np.array([recorded[name][j] for name in state_names], dtype=float)
+            all_values = np.array([recorded[name][j] for name in all_names], dtype=float)
+            if input_funcs:
+                u = np.array([func(float(t)) for func in input_funcs], dtype=float)
+            else:
+                u = np.empty(0)
+            missing_data[:, j] = missing_func(x, all_values, u, float(t))
+        for i, name in enumerate(missing_names):
+            recorded[name] = missing_data[i]
+
+    signal_series = []
+    for name in signal_names:
+        values = recorded.get(name)
+        if values is None:
+            values = np.full(len(time_arr), np.nan, dtype=float)
+        signal_series.append(values.tolist())
+
+    return {
+        'scopeData': {
+            '_acausal_net': {
+                'time': time_arr.tolist() if hasattr(time_arr, 'tolist') else list(time_arr),
+                'signals': signal_series,
+                'labels': signal_names
+            }
+        },
+        'spectrumData': {},
+        'nodeNames': _node_name_map if '_node_name_map' in globals() else {}
+    }
+
+_sim_gen = sim.run_streaming(
+    duration=${duration},
+    reset=${reset ? 'True' : 'False'},
+    tickrate=${tickrate},
+    func_callback=_extract_acausal_incremental
+)
+_sim_streaming = True
+`;
+}
+
+/**
  * Expression to step generator and get result in single evaluate call
  */
 export const STREAMING_STEP_EXPR = `_step_streaming_gen()`;

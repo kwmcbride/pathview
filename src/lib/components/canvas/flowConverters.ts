@@ -6,6 +6,7 @@ import type { Node, Edge } from '@xyflow/svelte';
 import type { Connection, Annotation } from '$lib/nodes/types';
 import type { EventInstance } from '$lib/events/types';
 import { HANDLE_ID } from '$lib/constants/handles';
+import { ACAUSAL_DOMAIN_COLORS } from '$lib/utils/colors';
 
 /**
  * Convert an EventInstance to a SvelteFlow Node
@@ -49,14 +50,23 @@ export function toAnnotationNode(annotation: Annotation): Node<Annotation> {
  * Convert a Connection to a SvelteFlow Edge
  */
 export function toFlowEdge(conn: Connection): Edge {
+	const isAcausal = conn.kind === 'acausal';
+	const domainColor = isAcausal
+		? ACAUSAL_DOMAIN_COLORS[conn.domain ?? ''] ?? ACAUSAL_DOMAIN_COLORS.default
+		: undefined;
+
 	return {
 		id: conn.id,
 		source: conn.sourceNodeId,
-		sourceHandle: HANDLE_ID.output(conn.sourceNodeId, conn.sourcePortIndex),
+		sourceHandle: isAcausal
+			? HANDLE_ID.acausal(conn.sourceNodeId, conn.sourcePortIndex)
+			: HANDLE_ID.output(conn.sourceNodeId, conn.sourcePortIndex),
 		target: conn.targetNodeId,
-		targetHandle: HANDLE_ID.input(conn.targetNodeId, conn.targetPortIndex),
-		type: 'orthogonal',
-		data: { waypoints: conn.waypoints },
+		targetHandle: isAcausal
+			? HANDLE_ID.acausal(conn.targetNodeId, conn.targetPortIndex)
+			: HANDLE_ID.input(conn.targetNodeId, conn.targetPortIndex),
+		type: isAcausal ? 'acausal' : 'orthogonal',
+		data: { waypoints: conn.waypoints, domainColor, domain: conn.domain },
 		selectable: true,
 		deletable: true,
 		animated: false

@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { Handle, Position, useUpdateNodeInternals } from '@xyflow/svelte';
 	import { nodeRegistry, type NodeInstance } from '$lib/nodes';
+	import { isAcausalJunctionNodeType } from '$lib/nodes/registry';
 	import { getShapeCssClass, isSubsystem } from '$lib/nodes/shapes/index';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { openNodeDialog } from '$lib/stores/nodeDialog';
@@ -10,13 +11,15 @@
 	import { pinnedPreviewsStore } from '$lib/stores/pinnedPreviews';
 	import { portLabelsStore } from '$lib/stores/portLabels';
 	import { hoveredHandle, selectedNodeHighlight } from '$lib/stores/hoveredHandle';
+	import { branchDragStore } from '$lib/stores/branchDrag';
 	import { showTooltip, hideTooltip } from '$lib/components/Tooltip.svelte';
 	import { paramInput } from '$lib/actions/paramInput';
 	import { plotDataStore } from '$lib/plotting/processing/plotDataStore';
-	import { PORT_LABEL, getPortPositionCalc, calculateNodeDimensions } from '$lib/constants/dimensions';
-	import { truncatePortLabel } from '$lib/utils/portLabels';
+	import { PORT_LABEL, JUNCTION, getPortPositionCalc, calculateNodeDimensions } from '$lib/constants/dimensions';
+	import { getEffectivePortLabelVisibility, truncatePortLabel } from '$lib/utils/portLabels';
 	import { containsMath, renderInlineMath, renderInlineMathSync, measureRenderedMath } from '$lib/utils/inlineMathRenderer';
 	import { getKatexCssUrl } from '$lib/utils/katexLoader';
+	import { HANDLE_ID } from '$lib/constants/handles';
 	import PlotPreview from './PlotPreview.svelte';
 
 	interface Props {
@@ -26,6 +29,18 @@
 	}
 
 	let { id, data, selected = false }: Props = $props();
+
+	interface PendingJunctionBranchGesture {
+		pointerId: number;
+		clientX: number;
+		clientY: number;
+		centerX: number;
+		centerY: number;
+		activated: boolean;
+	}
+
+	let pendingJunctionBranchGesture = $state<PendingJunctionBranchGesture | null>(null);
+	const JUNCTION_BRANCH_DRAG_THRESHOLD = 6;
 
 	// Get SvelteFlow hook to trigger re-measurement when node size changes
 	const updateNodeInternals = useUpdateNodeInternals();
@@ -70,13 +85,15 @@
 	const nodeShowInputLabels = $derived(data.params?.['_showInputLabels'] as boolean | undefined);
 	const nodeShowOutputLabels = $derived(data.params?.['_showOutputLabels'] as boolean | undefined);
 
-	// Effective visibility settings (per-node overrides global)
-	const showInputLabels = $derived(nodeShowInputLabels ?? globalShowPortLabels);
-	const showOutputLabels = $derived(nodeShowOutputLabels ?? globalShowPortLabels);
+	const effectivePortLabels = $derived(getEffectivePortLabelVisibility(data, globalShowPortLabels));
 
-	// Actual visibility: setting is ON and ports exist (single source of truth)
-	const hasVisibleInputLabels = $derived(showInputLabels && data.inputs.length > 0);
-	const hasVisibleOutputLabels = $derived(showOutputLabels && data.outputs.length > 0);
+	// Effective visibility settings (per-node overrides global, except forced acausal labels)
+	const showInputLabels = $derived(effectivePortLabels.inputs || (nodeShowInputLabels ?? globalShowPortLabels));
+	const showOutputLabels = $derived(effectivePortLabels.outputs || (nodeShowOutputLabels ?? globalShowPortLabels));
+
+	// Actual visibility: shared helper is the source of truth
+	const hasVisibleInputLabels = $derived(effectivePortLabels.inputs);
+	const hasVisibleOutputLabels = $derived(effectivePortLabels.outputs);
 
 	// For CSS class (show-labels when any labels are actually displayed)
 	const showPortLabels = $derived(hasVisibleInputLabels || hasVisibleOutputLabels);
@@ -90,6 +107,7 @@
 	});
 
 	onDestroy(() => {
+		clearPendingJunctionBranchGesture();
 		unsubscribePinned();
 		unsubscribePlotData();
 		unsubscribePortLabels();
@@ -160,10 +178,23 @@
 		}
 	});
 
+	// Acausal node detection
+	const isAcausal = $derived(!!typeDef?.acausalDomain);
+	const isAcausalJunctionNode = $derived(isAcausalJunctionNodeType(data.type));
+	const showInBoxAcausalPortLabels = $derived(isAcausal && !isAcausalJunctionNode);
+	const hasInlineInputLabels = $derived(hasVisibleInputLabels && !showInBoxAcausalPortLabels);
+	const hasInlineOutputLabels = $derived(hasVisibleOutputLabels && !showInBoxAcausalPortLabels);
+	const showInlinePortLabels = $derived(hasInlineInputLabels || hasInlineOutputLabels);
+
 	// Check if this node allows dynamic ports
-	const allowsDynamicInputs = $derived(typeDef?.ports.maxInputs === null);
+	const allowsDynamicInputs = $derived(!isAcausalJunctionNode && typeDef?.ports.maxInputs === null);
 	const allowsDynamicOutputs = $derived(typeDef?.ports.maxOutputs === null);
 	const syncPorts = $derived(typeDef?.ports.syncPorts ?? false);
+
+	// For acausal nodes: even-indexed ports on Left, odd-indexed ports on Right.
+	// We need per-side position calculations.
+	const acausalLeftPorts = $derived(data.inputs.filter((_, i) => i % 2 === 0));
+	const acausalRightPorts = $derived(data.inputs.filter((_, i) => i % 2 !== 0));
 
 	// Rotation state (0, 1, 2, 3 = 0°, 90°, 180°, 270°) - stored in node params
 	const rotation = $derived((data.params?.['_rotation'] as number) || 0);
@@ -208,6 +239,34 @@
 		}
 	});
 
+	const junctionHandlePositions = $derived(() => {
+		switch (rotation) {
+			case 1:
+				return [Position.Top, Position.Bottom, Position.Right, Position.Left];
+			case 2:
+				return [Position.Right, Position.Left, Position.Bottom, Position.Top];
+			case 3:
+				return [Position.Bottom, Position.Top, Position.Left, Position.Right];
+			default:
+				return [Position.Left, Position.Right, Position.Top, Position.Bottom];
+		}
+	});
+
+	function getJunctionHandleStyle(position: Position): string {
+		switch (position) {
+			case Position.Left:
+				return `top: 50%; left: ${JUNCTION.anchorInset}px;`;
+			case Position.Right:
+				return `top: 50%; right: ${JUNCTION.anchorInset}px;`;
+			case Position.Top:
+				return `top: ${JUNCTION.anchorInset}px; left: 50%;`;
+			case Position.Bottom:
+				return `bottom: ${JUNCTION.anchorInset}px; left: 50%;`;
+			default:
+				return '';
+		}
+	}
+
 	const maxPortsOnSide = $derived(Math.max(data.inputs.length, data.outputs.length));
 	const pinnedCount = $derived(validPinnedParams().length);
 
@@ -226,14 +285,17 @@
 		pinnedCount,
 		rotation,
 		typeDef?.name,
-		hasVisibleInputLabels,
-		hasVisibleOutputLabels,
+		hasInlineInputLabels,
+		hasInlineOutputLabels,
 		measuredName
 	));
+	const displayNodeDimensions = $derived(
+		isAcausalJunctionNode ? { width: JUNCTION.size, height: JUNCTION.size } : nodeDimensions
+	);
 
 	// Grid layout for port labels (computed in JS, replaces CSS grid-placement selectors)
 	const gridLayout = $derived(() => {
-		if (!showPortLabels) {
+		if (!showInlinePortLabels) {
 			return {
 				columns: undefined, rows: undefined,
 				inputStyle: '', innerStyle: '', outputStyle: ''
@@ -253,7 +315,7 @@
 			const outputBorder = rotation === 1 ? 'border-top' : 'border-bottom';
 			const colStyle = 'grid-column: 1;';
 
-			if (hasVisibleInputLabels && hasVisibleOutputLabels) {
+			if (hasInlineInputLabels && hasInlineOutputLabels) {
 				// rotation 1: input(row1) content(row2) output(row3)
 				// rotation 3: output(row1) content(row2) input(row3)
 				rows = `${labelSize} 1fr ${labelSize}`;
@@ -266,13 +328,13 @@
 					innerStyle = `${colStyle} grid-row: 2;`;
 					inputStyle = `${colStyle} grid-row: 3; ${inputBorder}: 1px solid var(--border);`;
 				}
-			} else if (hasVisibleInputLabels) {
+			} else if (hasInlineInputLabels) {
 				rows = rotation === 1 ? `${labelSize} 1fr` : `1fr ${labelSize}`;
 				const inputRow = rotation === 1 ? 1 : 2;
 				const innerRow = rotation === 1 ? 2 : 1;
 				inputStyle = `${colStyle} grid-row: ${inputRow}; ${inputBorder}: 1px solid var(--border);`;
 				innerStyle = `${colStyle} grid-row: ${innerRow};`;
-			} else if (hasVisibleOutputLabels) {
+			} else if (hasInlineOutputLabels) {
 				rows = rotation === 1 ? `1fr ${labelSize}` : `${labelSize} 1fr`;
 				const outputRow = rotation === 1 ? 2 : 1;
 				const innerRow = rotation === 1 ? 1 : 2;
@@ -287,7 +349,7 @@
 			const inputBorder = rotation === 0 ? 'border-right' : 'border-left';
 			const outputBorder = rotation === 0 ? 'border-left' : 'border-right';
 
-			if (hasVisibleInputLabels && hasVisibleOutputLabels) {
+			if (hasInlineInputLabels && hasInlineOutputLabels) {
 				columns = `${labelSize} 1fr ${labelSize}`;
 				if (rotation === 0) {
 					// input(col1) content(col2) output(col3)
@@ -300,14 +362,14 @@
 					innerStyle = `${rowStyle} grid-column: 2;`;
 					inputStyle = `${rowStyle} grid-column: 3; ${inputBorder}: 1px solid var(--border);`;
 				}
-			} else if (hasVisibleInputLabels) {
+			} else if (hasInlineInputLabels) {
 				// rotation 0: input(col1) content(col2) | rotation 2: content(col1) input(col2)
 				columns = rotation === 0 ? `${labelSize} 1fr` : `1fr ${labelSize}`;
 				const inputCol = rotation === 0 ? 1 : 2;
 				const innerCol = rotation === 0 ? 2 : 1;
 				inputStyle = `${rowStyle} grid-column: ${inputCol}; ${inputBorder}: 1px solid var(--border);`;
 				innerStyle = `${rowStyle} grid-column: ${innerCol};`;
-			} else if (hasVisibleOutputLabels) {
+			} else if (hasInlineOutputLabels) {
 				// rotation 0: content(col1) output(col2) | rotation 2: output(col1) content(col2)
 				columns = rotation === 0 ? `1fr ${labelSize}` : `${labelSize} 1fr`;
 				const outputCol = rotation === 0 ? 2 : 1;
@@ -328,6 +390,7 @@
 	// Handle double-click to open properties dialog or drill into subsystem
 	function handleDoubleClick(event: MouseEvent) {
 		event.stopPropagation();
+		if (isAcausalJunctionNode) return;
 		if (isSubsystemNode) {
 			// Drill down into subsystem
 			graphStore.drillDown(id);
@@ -435,6 +498,75 @@
 		hideTooltip();
 	}
 
+	function clearPendingJunctionBranchGesture() {
+		pendingJunctionBranchGesture = null;
+		window.removeEventListener('pointermove', handlePendingJunctionPointerMove, true);
+		window.removeEventListener('pointerup', handlePendingJunctionPointerUp, true);
+	}
+
+	function handlePendingJunctionPointerMove(event: PointerEvent) {
+		const gesture = pendingJunctionBranchGesture;
+		if (!gesture || event.pointerId !== gesture.pointerId) return;
+		if ((event.buttons & 2) === 0) {
+			clearPendingJunctionBranchGesture();
+			return;
+		}
+		if (gesture.activated) return;
+
+		const distance = Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY);
+		if (distance < JUNCTION_BRANCH_DRAG_THRESHOLD) return;
+
+		branchDragStore.start({
+			mode: 'junction',
+			edgeId: null,
+			junctionNodeId: id,
+			domain: typeDef?.acausalDomain ?? null,
+			domainColor: nodeColor,
+			junctionType: null,
+			sourceNodeId: null,
+			sourcePortIndex: null,
+			targetNodeId: null,
+			targetPortIndex: null,
+			junctionFlowPosition: { ...data.position },
+			junctionScreenPosition: { x: gesture.centerX, y: gesture.centerY },
+			sourceJunctionPort: null,
+			targetJunctionPort: null,
+			segmentOrientation: null
+		});
+		branchDragStore.updatePointer({ x: event.clientX, y: event.clientY });
+		pendingJunctionBranchGesture = { ...gesture, activated: true };
+	}
+
+	function handlePendingJunctionPointerUp(event: PointerEvent) {
+		if (pendingJunctionBranchGesture && event.pointerId === pendingJunctionBranchGesture.pointerId) {
+			clearPendingJunctionBranchGesture();
+		}
+	}
+
+	function handleNodePointerDown(event: PointerEvent) {
+		if (!isAcausalJunctionNode || event.button !== 2) return;
+		event.preventDefault();
+		event.stopPropagation();
+
+		const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+		pendingJunctionBranchGesture = {
+			pointerId: event.pointerId,
+			clientX: event.clientX,
+			clientY: event.clientY,
+			centerX: rect.left + rect.width / 2,
+			centerY: rect.top + rect.height / 2,
+			activated: false
+		};
+		window.addEventListener('pointermove', handlePendingJunctionPointerMove, true);
+		window.addEventListener('pointerup', handlePendingJunctionPointerUp, true);
+	}
+
+	function handleNodeContextMenu(event: MouseEvent) {
+		if (!isAcausalJunctionNode) return;
+		event.preventDefault();
+		event.stopPropagation();
+	}
+
 	// Highlight connected edges when node is selected
 	$effect(() => {
 		if (selected) {
@@ -454,18 +586,21 @@
 </svelte:head>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-	class="node {shapeClass()}"
-	class:selected
-	class:vertical={isVertical}
-	class:preview-hovered={showPreview}
-	class:subsystem-type={isSubsystemType}
-	class:show-labels={showPortLabels}
-	data-rotation={rotation}
-	style="width: {nodeDimensions.width}px; height: {nodeDimensions.height}px; --node-color: {nodeColor};"
+	<div
+		class="node {shapeClass()}"
+		class:selected
+		class:vertical={isVertical}
+		class:preview-hovered={showPreview}
+		class:subsystem-type={isSubsystemType}
+		class:acausal-junction={isAcausalJunctionNode}
+		class:show-labels={showInlinePortLabels}
+		data-rotation={rotation}
+		style="width: {displayNodeDimensions.width}px; height: {displayNodeDimensions.height}px; --node-color: {nodeColor}; --junction-dot-size: {JUNCTION.dotSize}px; --junction-handle-size: {JUNCTION.handleSize}px;"
 	ondblclick={handleDoubleClick}
 	onmouseenter={handleMouseEnter}
 	onmouseleave={handleMouseLeave}
+	onpointerdown={handleNodePointerDown}
+	oncontextmenu={handleNodeContextMenu}
 >
 	<!-- Plot preview for recording nodes -->
 	{#if (hasPreloaded || previewsPinned) && hasPlotData}
@@ -488,8 +623,27 @@
 		style:grid-template-columns={gridLayout().columns}
 		style:grid-template-rows={gridLayout().rows}
 	>
+		{#if !isAcausalJunctionNode}
+		{#if showInBoxAcausalPortLabels}
+			<div class="acausal-port-labels-overlay" aria-hidden="true">
+				{#each data.inputs as port, i}
+					{@const isLeft = i % 2 === 0}
+					{@const sideIndex = Math.floor(i / 2)}
+					{@const sideTotal = isLeft ? acausalLeftPorts.length : acausalRightPorts.length}
+					<span
+						class="acausal-port-label"
+						class:left={isLeft}
+						class:right={!isLeft}
+						style="top: {getPortPositionCalc(sideIndex, sideTotal)};"
+					>
+						{truncatePortLabel(port.name)}
+					</span>
+				{/each}
+			</div>
+		{/if}
+
 		<!-- Input port labels -->
-		{#if hasVisibleInputLabels}
+		{#if hasInlineInputLabels}
 			{#if isVertical}
 				<div class="port-labels port-labels-input port-labels-row" style={gridLayout().inputStyle}>
 					{#each data.inputs as port, i}
@@ -550,7 +704,7 @@
 		</div>
 
 		<!-- Output port labels -->
-		{#if hasVisibleOutputLabels}
+		{#if hasInlineOutputLabels}
 			{#if isVertical}
 				<div class="port-labels port-labels-output port-labels-row" style={gridLayout().outputStyle}>
 					{#each data.outputs as port, i}
@@ -568,6 +722,7 @@
 					{/each}
 				</div>
 			{/if}
+		{/if}
 		{/if}
 	</div>
 
@@ -587,35 +742,71 @@
 		</div>
 	{/if}
 
-	<!-- Input handles -->
-	{#key `${rotation}-${data.inputs.length}`}
-		{#each data.inputs as port, i}
-			<Handle
-				type="target"
-				position={inputPosition()}
-				id={port.id}
-				style={isVertical ? `left: ${getPortPositionCalc(i, data.inputs.length)};` : `top: ${getPortPositionCalc(i, data.inputs.length)};`}
-				class="handle handle-input"
-				onmouseenter={(e) => handleInputMouseEnter(e, port)}
-				onmouseleave={() => handleInputMouseLeave(port)}
-			/>
-		{/each}
-	{/key}
+	{#if isAcausal}
+		<!-- Acausal handles: single source handle per port (ConnectionMode.Loose allows
+		     source-to-source connections). Junction nodes use L/R/T/B placement. -->
+		{#key data.inputs.length}
+			{#each data.inputs as port, i}
+				{#if isAcausalJunctionNode}
+					{@const junctionPos = junctionHandlePositions()[i]}
+					<Handle
+						type="source"
+						position={junctionPos}
+						id={HANDLE_ID.acausal(id, i)}
+						style={getJunctionHandleStyle(junctionPos)}
+						class="handle handle-acausal handle-acausal-junction"
+						isConnectableStart={false}
+						onmouseenter={(e) => handleInputMouseEnter(e, port)}
+						onmouseleave={() => handleInputMouseLeave(port)}
+					/>
+				{:else}
+					{@const isLeft = i % 2 === 0}
+					{@const sideIndex = Math.floor(i / 2)}
+					{@const sideTotal = isLeft ? acausalLeftPorts.length : acausalRightPorts.length}
+					{@const pos = isLeft ? Position.Left : Position.Right}
+					<Handle
+						type="source"
+						position={pos}
+						id={HANDLE_ID.acausal(id, i)}
+						style="top: {getPortPositionCalc(sideIndex, sideTotal)};"
+						class="handle handle-acausal"
+						onmouseenter={(e) => handleInputMouseEnter(e, port)}
+						onmouseleave={() => handleInputMouseLeave(port)}
+					/>
+				{/if}
+			{/each}
+		{/key}
+	{:else}
+		<!-- Input handles (causal) -->
+		{#key `${rotation}-${data.inputs.length}`}
+			{#each data.inputs as port, i}
+				<Handle
+					type="target"
+					position={inputPosition()}
+					id={port.id}
+					style={isVertical ? `left: ${getPortPositionCalc(i, data.inputs.length)};` : `top: ${getPortPositionCalc(i, data.inputs.length)};`}
+					class="handle handle-input"
+					onmouseenter={(e) => handleInputMouseEnter(e, port)}
+					onmouseleave={() => handleInputMouseLeave(port)}
+				/>
+			{/each}
+		{/key}
 
-	<!-- Output handles -->
-	{#key `${rotation}-${data.outputs.length}`}
-		{#each data.outputs as port, i}
-			<Handle
-				type="source"
-				position={outputPosition()}
-				id={port.id}
-				style={isVertical ? `left: ${getPortPositionCalc(i, data.outputs.length)};` : `top: ${getPortPositionCalc(i, data.outputs.length)};`}
-				class="handle handle-output"
-				onmouseenter={(e) => handleOutputMouseEnter(e, port)}
-				onmouseleave={() => handleOutputMouseLeave(port)}
-			/>
-		{/each}
-	{/key}
+		<!-- Output handles (causal) -->
+		{#key `${rotation}-${data.outputs.length}`}
+			{#each data.outputs as port, i}
+				<Handle
+					type="source"
+					position={outputPosition()}
+					id={port.id}
+					style={isVertical ? `left: ${getPortPositionCalc(i, data.outputs.length)};` : `top: ${getPortPositionCalc(i, data.outputs.length)};`}
+					class="handle handle-output"
+					onmouseenter={(e) => handleOutputMouseEnter(e, port)}
+					onmouseleave={() => handleOutputMouseLeave(port)}
+				/>
+			{/each}
+		{/key}
+	{/if}
 </div>
 
 <style>
@@ -628,6 +819,54 @@
 		font-size: 10px;
 		overflow: visible; /* Allow handles to extend outside */
 		--node-radius: 8px;
+	}
+
+	.node.acausal-junction {
+		background: transparent;
+		border-color: transparent;
+		cursor: grab;
+		user-select: none;
+		-webkit-user-select: none;
+		touch-action: none;
+	}
+
+	.node.acausal-junction:active {
+		cursor: grabbing;
+	}
+
+	.node.acausal-junction::before {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: var(--junction-dot-size);
+		height: var(--junction-dot-size);
+		transform: translate(-50%, -50%);
+		border-radius: 50%;
+		background: var(--node-color);
+		border: 2px solid var(--surface);
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--node-color) 55%, transparent),
+			0 0 8px color-mix(in srgb, var(--node-color) 45%, transparent);
+		pointer-events: none;
+	}
+
+	.node.acausal-junction .node-clip {
+		display: none;
+	}
+
+	:global(.node.acausal-junction .handle-acausal-junction) {
+		width: var(--junction-handle-size);
+		height: var(--junction-handle-size);
+		opacity: 0;
+		pointer-events: none;
+		background: transparent;
+		border: none;
+	}
+
+	:global(.node.acausal-junction .handle-acausal-junction::before),
+	:global(.node.acausal-junction .handle-acausal-junction::after) {
+		display: none;
 	}
 
 	/* Shape variants - set both border-radius and custom property for inner clipping */
@@ -967,6 +1206,34 @@
 		clip-path: path('M 3.57 0.98 L 5.43 2.85 Q 6.00 3.41 6.00 4.21 L 6.00 7.20 Q 6.00 8.00 5.20 8.00 L 0.80 8.00 Q 0.00 8.00 0.00 7.20 L 0.00 4.21 Q 0.00 3.41 0.57 2.85 L 2.43 0.98 Q 3.00 0.41 3.57 0.98 Z');
 	}
 
+	/* ──────────────────────────────────────────────────────────────
+	   Acausal handles — circular, domain-colored hollow circles.
+	   These override the pentagon shape used by causal handles.
+	   We hide the ::before / ::after pseudo-elements and style
+	   the handle <div> itself directly.
+	   ────────────────────────────────────────────────────────────── */
+	:global(.node .svelte-flow__handle.handle-acausal) {
+		width: 10px;
+		height: 10px;
+		border-radius: 50% !important;
+		border: 2px solid var(--node-color, var(--edge));
+		background: var(--surface-raised);
+		transition: background 0.15s ease, box-shadow 0.15s ease;
+	}
+
+	/* Hide the pentagon pseudo-elements for acausal handles */
+	:global(.node .svelte-flow__handle.handle-acausal::before),
+	:global(.node .svelte-flow__handle.handle-acausal::after) {
+		display: none !important;
+	}
+
+	/* Hover / selected state for acausal handles */
+	:global(.node .svelte-flow__handle.handle-acausal:hover),
+	:global(.node.selected .svelte-flow__handle.handle-acausal) {
+		background: var(--node-color);
+		box-shadow: 0 0 4px var(--node-color);
+	}
+
 	/* Plot preview popup - base styles */
 	.plot-preview-popup {
 		position: absolute;
@@ -1107,5 +1374,34 @@
 	}
 	.node.show-labels.vertical[data-rotation="3"] .port-labels-output .port-label {
 		transform: translateX(-50%) translateY(calc(-50% + 6px)) rotate(-90deg);
+	}
+
+	.acausal-port-labels-overlay {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		pointer-events: none;
+	}
+
+	.acausal-port-label {
+		position: absolute;
+		font-size: 8px;
+		color: var(--text-muted);
+		white-space: nowrap;
+		max-width: calc(50% - 14px);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		line-height: 1;
+		transform: translateY(-50%);
+	}
+
+	.acausal-port-label.left {
+		left: 8px;
+		text-align: left;
+	}
+
+	.acausal-port-label.right {
+		right: 8px;
+		text-align: right;
 	}
 </style>

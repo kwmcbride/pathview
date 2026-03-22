@@ -65,6 +65,7 @@ function processAllPlots(
 	// Process scope plots
 	if (result.scopeData) {
 		for (const [nodeId, data] of Object.entries(result.scopeData)) {
+			if (nodeId === '_acausal_net') continue;
 			const processed = processPlot({
 				nodeId,
 				type: 'scope',

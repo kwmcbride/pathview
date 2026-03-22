@@ -3,13 +3,19 @@
  */
 
 type ScreenToFlowConverter = (screenPos: { x: number; y: number }) => { x: number; y: number };
+type FlowToScreenConverter = (flowPos: { x: number; y: number }) => { x: number; y: number };
 type HasSelectionFn = () => boolean;
 
 let screenToFlowConverterFn: ScreenToFlowConverter | null = null;
+let flowToScreenConverterFn: FlowToScreenConverter | null = null;
 let hasSelectionFn: HasSelectionFn | null = null;
 
 export function registerScreenToFlowConverter(converter: ScreenToFlowConverter): void {
 	screenToFlowConverterFn = converter;
+}
+
+export function registerFlowToScreenConverter(converter: FlowToScreenConverter): void {
+	flowToScreenConverterFn = converter;
 }
 
 export function screenToFlow(screenPos: { x: number; y: number }): { x: number; y: number } {
@@ -18,6 +24,13 @@ export function screenToFlow(screenPos: { x: number; y: number }): { x: number; 
 	}
 	// Fallback - just return as-is (no zoom/pan adjustment)
 	return screenPos;
+}
+
+export function flowToScreen(flowPos: { x: number; y: number }): { x: number; y: number } {
+	if (flowToScreenConverterFn) {
+		return flowToScreenConverterFn(flowPos);
+	}
+	return flowPos;
 }
 
 export function registerHasSelection(fn: HasSelectionFn): void {

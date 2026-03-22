@@ -74,6 +74,9 @@ export const graphStore = {
 	// ==================== CONNECTION OPERATIONS ====================
 	addConnection: connections.addConnection,
 	removeConnection: connections.removeConnection,
+	splitAcausalConnectionWithJunction: connections.splitAcausalConnectionWithJunction,
+	optimizeJunctionPorts: connections.optimizeJunctionPorts,
+	optimizeAllJunctionPorts: connections.optimizeAllJunctionPorts,
 	getAllConnections: connections.getAllConnections,
 	updateConnectionWaypoints: connections.updateConnectionWaypoints,
 

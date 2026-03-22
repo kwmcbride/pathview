@@ -5,12 +5,16 @@
 		SvelteFlow,
 		Background,
 		BackgroundVariant,
+		ConnectionMode,
+		Position,
+		getSmoothStepPath,
 		type Node,
 		type Edge,
 		type Connection as FlowConnection,
 		type NodeTypes,
 		type EdgeTypes
 	} from '@xyflow/svelte';
+	import type { FinalConnectionState, OnConnectStartParams } from '@xyflow/system';
 	import '@xyflow/svelte/dist/style.css';
 
 	import { isInputFocused } from '$lib/utils/focus';
@@ -18,24 +22,32 @@
 	import EventNode from './nodes/EventNode.svelte';
 	import AnnotationNode from './nodes/AnnotationNode.svelte';
 	import OrthogonalEdge from './edges/OrthogonalEdge.svelte';
+	import AcausalEdge from './edges/AcausalEdge.svelte';
 	import FlowUpdater from './FlowUpdater.svelte';
 	import { graphStore } from '$lib/stores/graph';
 	import { eventStore, setEventSelection } from '$lib/stores/events';
 	import { selectedNodeIds as graphSelectedNodeIds } from '$lib/stores/graph/state';
 	import { historyStore } from '$lib/stores/history';
 	import { routingStore, buildRoutingContext, type PortInfo } from '$lib/stores/routing';
+	import { hoveredHandle } from '$lib/stores/hoveredHandle';
+	import { branchDragStore, type BranchDragState } from '$lib/stores/branchDrag';
 	import { HANDLE_OFFSET, ARROW_INSET, type Direction, type PortStub } from '$lib/routing';
 	import { themeStore, type Theme } from '$lib/stores/theme';
 	import { clearSelectionTrigger, nudgeTrigger, selectNodeTrigger, registerHasSelection, triggerFitView } from '$lib/stores/viewActions';
-	import { screenToFlow } from '$lib/utils/viewUtils';
+	import { flowToScreen, screenToFlow } from '$lib/utils/viewUtils';
 	import { dropTargetBridge } from '$lib/stores/dropTargetBridge';
 	import { contextMenuStore } from '$lib/stores/contextMenu';
 	import { nodeUpdatesStore } from '$lib/stores/nodeUpdates';
-		import { nodeRegistry } from '$lib/nodes';
+	import { nodeRegistry } from '$lib/nodes';
+	import { getAcausalJunctionType, isAcausalJunctionNodeType, isAcausalNodeType } from '$lib/nodes/registry';
+	import { HANDLE_ID } from '$lib/constants/handles';
+	import { JUNCTION } from '$lib/constants/dimensions';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { GRID_SIZE, SNAP_GRID, BACKGROUND_GAP } from '$lib/constants/grid';
+	import { ACAUSAL_DOMAIN_COLORS } from '$lib/utils/colors';
 	import type { NodeInstance, Connection, Annotation } from '$lib/nodes/types';
 	import type { EventInstance } from '$lib/events/types';
+	import type { BranchSegmentOrientation } from '$lib/stores/branchDrag';
 
 	// Canvas utilities
 	import {
@@ -54,9 +66,78 @@
 		colorMode = theme;
 	});
 
+	let branchDrag: BranchDragState = $state(branchDragStore.get());
+	const unsubscribeBranchDrag = branchDragStore.subscribe((state) => {
+		branchDrag = state;
+	});
+
+	let currentHoveredHandle = $state<{ nodeId: string; handleId: string; color?: string } | null>(null);
+	const unsubscribeHoveredHandle = hoveredHandle.subscribe((value) => {
+		currentHoveredHandle = value;
+	});
+
+	interface PortConnectionBranchPreview {
+		edgeId: string | null;
+		domainColor: string;
+		junctionType: string;
+		dragSourceNodeId: string;
+		dragSourcePortIndex: number;
+		sourceNodeId: string | null;
+		sourcePortIndex: number | null;
+		targetNodeId: string | null;
+		targetPortIndex: number | null;
+		junctionFlowPosition: { x: number; y: number };
+		junctionScreenPosition: { x: number; y: number };
+		sourceJunctionPort: number | null;
+		targetJunctionPort: number | null;
+		branchPort: number;
+		segmentOrientation: BranchSegmentOrientation;
+		existingJunctionNodeId: string | null;
+	}
+
+	interface BranchWireDropPreview {
+		edgeId: string | null;
+		sourceNodeId: string | null;
+		sourcePortIndex: number | null;
+		targetNodeId: string | null;
+		targetPortIndex: number | null;
+		junctionFlowPosition: { x: number; y: number };
+		junctionScreenPosition: { x: number; y: number };
+		sourceJunctionPort: number | null;
+		targetJunctionPort: number | null;
+		branchPort: number;
+		existingJunctionNodeId: string | null;
+	}
+
+	interface PortConnectionDragState {
+		active: boolean;
+		sourceNodeId: string | null;
+		sourcePortIndex: number | null;
+		sourceFlowPosition: { x: number; y: number } | null;
+		sourceHandlePosition: Position | null;
+		domain: string | null;
+		domainColor: string;
+		junctionType: string | null;
+	}
+
+	const PORT_CONNECTION_EDGE_HOVER_THRESHOLD = 14;
+	const EXISTING_JUNCTION_REUSE_THRESHOLD = 10;
+	let portConnectionBranchPreview = $state<PortConnectionBranchPreview | null>(null);
+	let branchWireDropPreview = $state<BranchWireDropPreview | null>(null);
+	let portConnectionDrag = $state<PortConnectionDragState>({
+		active: false,
+		sourceNodeId: null,
+		sourcePortIndex: null,
+		sourceFlowPosition: null,
+		sourceHandlePosition: null,
+		domain: null,
+		domainColor: ACAUSAL_DOMAIN_COLORS.default,
+		junctionType: null
+	});
+
 	
 	// Track mouse position for waypoint placement
-	let mousePosition = { x: 0, y: 0 };
+	let mousePosition = $state({ x: 0, y: 0 });
 
 	function handleMouseMove(event: MouseEvent) {
 		mousePosition = { x: event.clientX, y: event.clientY };
@@ -237,11 +318,520 @@
 	}
 
 	// Cleanup function - will add subscriptions as they're defined
-	const cleanups: (() => void)[] = [unsubscribeTheme, unsubscribeNodeUpdates, unsubscribeClearSelection, unsubscribeNudge, unsubscribeSelectNode];
+	const cleanups: (() => void)[] = [
+		unsubscribeTheme,
+		unsubscribeBranchDrag,
+		unsubscribeHoveredHandle,
+		unsubscribeNodeUpdates,
+		unsubscribeClearSelection,
+		unsubscribeNudge,
+		unsubscribeSelectNode,
+		() => {
+			if (pendingJunctionAutoOptimize) {
+				clearTimeout(pendingJunctionAutoOptimize);
+			}
+		}
+	];
 	onDestroy(() => cleanups.forEach(fn => fn()));
 
 	function clearPendingUpdates() {
 		pendingNodeUpdates = [];
+	}
+
+	function getBranchPreviewSourcePosition(): Position {
+		const origin = branchDrag.junctionScreenPosition;
+		const current = branchDrag.currentScreenPosition ?? origin;
+		if (!origin || !current || branchDrag.segmentOrientation === null) {
+			const dx = (current?.x ?? 0) - (origin?.x ?? 0);
+			const dy = (current?.y ?? 0) - (origin?.y ?? 0);
+			if (Math.abs(dx) >= Math.abs(dy)) {
+				return dx >= 0 ? Position.Right : Position.Left;
+			}
+			return dy >= 0 ? Position.Bottom : Position.Top;
+		}
+
+		if (branchDrag.segmentOrientation === 'vertical') {
+			return current.x >= origin.x ? Position.Right : Position.Left;
+		}
+
+		return current.y >= origin.y ? Position.Bottom : Position.Top;
+	}
+
+	function getBranchJunctionPort(position: Position): number {
+		switch (position) {
+			case Position.Left:
+				return 0;
+			case Position.Right:
+				return 1;
+			case Position.Top:
+				return 2;
+			case Position.Bottom:
+				return 3;
+			default:
+				return 1;
+		}
+	}
+
+	function getOccupiedJunctionPorts(nodeId: string): Set<number> {
+		const currentConnections = get(graphStore.connections);
+		const occupied = new Set<number>();
+		for (const connection of currentConnections) {
+			if (connection.kind !== 'acausal') continue;
+			if (connection.sourceNodeId === nodeId) occupied.add(connection.sourcePortIndex);
+			if (connection.targetNodeId === nodeId) occupied.add(connection.targetPortIndex);
+		}
+		return occupied;
+	}
+
+	function getAvailableJunctionBranchPort(nodeId: string, preferredPosition: Position): number | null {
+		const occupied = getOccupiedJunctionPorts(nodeId);
+		return getAvailablePreviewJunctionPort(preferredPosition, occupied);
+	}
+
+	function getAvailablePreviewJunctionPort(preferredPosition: Position, occupied: Set<number>): number | null {
+		const preferredPort = getBranchJunctionPort(preferredPosition);
+		if (!occupied.has(preferredPort)) return preferredPort;
+
+		const fallbacks =
+			preferredPosition === Position.Left || preferredPosition === Position.Right
+				? [Position.Top, Position.Bottom, Position.Left, Position.Right]
+				: [Position.Left, Position.Right, Position.Top, Position.Bottom];
+
+		for (const position of fallbacks) {
+			const port = getBranchJunctionPort(position);
+			if (!occupied.has(port)) return port;
+		}
+
+		return null;
+	}
+
+	function getPreferredPositionFromDelta(dx: number, dy: number): Position {
+		if (Math.abs(dx) >= Math.abs(dy)) {
+			return dx >= 0 ? Position.Right : Position.Left;
+		}
+		return dy >= 0 ? Position.Bottom : Position.Top;
+	}
+
+	function getReusableJunctionPreview(
+		connection: Connection,
+		dragSourceFlowPosition: { x: number; y: number },
+		pointerFlowPosition: { x: number; y: number }
+	): {
+		junctionNodeId: string;
+		junctionFlowPosition: { x: number; y: number };
+		junctionScreenPosition: { x: number; y: number };
+		branchPort: number;
+	} | null {
+		const candidates: Array<{
+			junctionNodeId: string;
+			junctionFlowPosition: { x: number; y: number };
+			junctionScreenPosition: { x: number; y: number };
+			branchPort: number;
+			distance: number;
+		}> = [];
+
+		for (const nodeId of [connection.sourceNodeId, connection.targetNodeId]) {
+			const node = graphStore.getNode(nodeId);
+			if (!node || !isAcausalJunctionNodeType(node.type)) continue;
+
+			const branchPort = getAvailableJunctionBranchPort(
+				nodeId,
+				getPreferredPositionFromDelta(
+					dragSourceFlowPosition.x - node.position.x,
+					dragSourceFlowPosition.y - node.position.y
+				)
+			);
+			if (branchPort === null) continue;
+
+			const junctionFlowPosition = { x: node.position.x, y: node.position.y };
+			const junctionScreenPosition = flowToScreen(junctionFlowPosition);
+			const screenDistance = Math.hypot(
+				mousePosition.x - junctionScreenPosition.x,
+				mousePosition.y - junctionScreenPosition.y
+			);
+			if (screenDistance > EXISTING_JUNCTION_REUSE_THRESHOLD) continue;
+
+			candidates.push({
+				junctionNodeId: nodeId,
+				junctionFlowPosition,
+				junctionScreenPosition,
+				branchPort,
+				distance: Math.hypot(
+					pointerFlowPosition.x - junctionFlowPosition.x,
+					pointerFlowPosition.y - junctionFlowPosition.y
+				)
+			});
+		}
+
+		if (candidates.length === 0) return null;
+		candidates.sort((a, b) => a.distance - b.distance);
+		const best = candidates[0];
+		return {
+			junctionNodeId: best.junctionNodeId,
+			junctionFlowPosition: best.junctionFlowPosition,
+			junctionScreenPosition: best.junctionScreenPosition,
+			branchPort: best.branchPort
+		};
+	}
+
+	function resolveBranchWireDropPreview(): BranchWireDropPreview | null {
+		if (!branchDrag.active || !branchDrag.domain || !branchDrag.junctionFlowPosition) {
+			return null;
+		}
+
+		const pointerFlowPosition = screenToFlow(mousePosition);
+		const sourceFlowPosition = branchDrag.junctionFlowPosition;
+		const currentConnections = get(graphStore.connections);
+		let bestPreview: BranchWireDropPreview | null = null;
+		let bestDistance = Number.POSITIVE_INFINITY;
+
+		const edgeElements = document.querySelectorAll<SVGGElement>('[data-branch-edge-id]');
+		for (const edgeEl of edgeElements) {
+			const edgeId = edgeEl.dataset.branchEdgeId;
+			if (!edgeId) continue;
+			if (branchDrag.mode === 'edge' && edgeId === branchDrag.edgeId) continue;
+
+			const existingConnection = currentConnections.find(
+				(connection) => connection.id === edgeId && connection.kind === 'acausal'
+			);
+			if (!existingConnection || existingConnection.domain !== branchDrag.domain) continue;
+
+			const pathEl = edgeEl.querySelector('path') as SVGPathElement | null;
+			if (!pathEl) continue;
+
+			const placement = getPathJunctionPlacement(pathEl, pointerFlowPosition.x, pointerFlowPosition.y, Position.Right);
+			if (!placement) continue;
+
+			const closestPointScreenPosition = flowToScreen({
+				x: placement.closestPoint.x,
+				y: placement.closestPoint.y
+			});
+			const distance = Math.hypot(
+				closestPointScreenPosition.x - mousePosition.x,
+				closestPointScreenPosition.y - mousePosition.y
+			);
+			if (distance > PORT_CONNECTION_EDGE_HOVER_THRESHOLD || distance >= bestDistance) continue;
+
+			const reusableJunction = getReusableJunctionPreview(
+				existingConnection,
+				sourceFlowPosition,
+				pointerFlowPosition
+			);
+			if (reusableJunction) {
+				if (branchDrag.mode === 'junction' && reusableJunction.junctionNodeId === branchDrag.junctionNodeId) {
+					continue;
+				}
+				bestDistance = distance;
+				bestPreview = {
+					edgeId: null,
+					sourceNodeId: null,
+					sourcePortIndex: null,
+					targetNodeId: null,
+					targetPortIndex: null,
+					junctionFlowPosition: reusableJunction.junctionFlowPosition,
+					junctionScreenPosition: reusableJunction.junctionScreenPosition,
+					sourceJunctionPort: null,
+					targetJunctionPort: null,
+					branchPort: reusableJunction.branchPort,
+					existingJunctionNodeId: reusableJunction.junctionNodeId
+				};
+				continue;
+			}
+
+			const branchPort = getAvailablePreviewJunctionPort(
+				getPreferredPositionFromDelta(
+					sourceFlowPosition.x - placement.closestPoint.x,
+					sourceFlowPosition.y - placement.closestPoint.y
+				),
+				new Set([placement.sourceJunctionPort, placement.targetJunctionPort])
+			);
+			if (branchPort === null) continue;
+
+			bestDistance = distance;
+			bestPreview = {
+				edgeId,
+				sourceNodeId: existingConnection.sourceNodeId,
+				sourcePortIndex: existingConnection.sourcePortIndex,
+				targetNodeId: existingConnection.targetNodeId,
+				targetPortIndex: existingConnection.targetPortIndex,
+				junctionFlowPosition: { x: placement.closestPoint.x, y: placement.closestPoint.y },
+				junctionScreenPosition: closestPointScreenPosition,
+				sourceJunctionPort: placement.sourceJunctionPort,
+				targetJunctionPort: placement.targetJunctionPort,
+				branchPort,
+				existingJunctionNodeId: null
+			};
+		}
+
+		return bestPreview;
+	}
+
+	function getClosestPointOnPath(
+		pathEl: SVGPathElement,
+		x: number,
+		y: number
+	): { x: number; y: number; length: number; totalLength: number } | null {
+		const totalLength = pathEl.getTotalLength();
+		if (totalLength <= 0) return null;
+
+		const sampleStep = Math.max(2, Math.min(6, totalLength / 48));
+		let closestLength = 0;
+		let closestDistance = Number.POSITIVE_INFINITY;
+
+		for (let length = 0; length <= totalLength; length += sampleStep) {
+			const point = pathEl.getPointAtLength(length);
+			const distance = Math.hypot(point.x - x, point.y - y);
+			if (distance < closestDistance) {
+				closestDistance = distance;
+				closestLength = length;
+			}
+		}
+
+		if (closestLength !== totalLength) {
+			const endPoint = pathEl.getPointAtLength(totalLength);
+			const endDistance = Math.hypot(endPoint.x - x, endPoint.y - y);
+			if (endDistance < closestDistance) {
+				closestLength = totalLength;
+			}
+		}
+
+		const point = pathEl.getPointAtLength(closestLength);
+		return { x: point.x, y: point.y, length: closestLength, totalLength };
+	}
+
+	function getPathJunctionPlacement(
+		pathEl: SVGPathElement,
+		clickX: number,
+		clickY: number,
+		fallbackSourcePosition: Position
+	): {
+		sourceJunctionPort: number;
+		targetJunctionPort: number;
+		segmentOrientation: BranchSegmentOrientation;
+		closestPoint: { x: number; y: number };
+	} | null {
+		const closestPoint = getClosestPointOnPath(pathEl, clickX, clickY);
+		if (!closestPoint) return null;
+
+		const fallback =
+			fallbackSourcePosition === Position.Top || fallbackSourcePosition === Position.Bottom
+				? (
+					fallbackSourcePosition === Position.Bottom
+						? { sourceJunctionPort: 2, targetJunctionPort: 3, segmentOrientation: 'vertical' as const }
+						: { sourceJunctionPort: 3, targetJunctionPort: 2, segmentOrientation: 'vertical' as const }
+				)
+				: (
+					fallbackSourcePosition === Position.Right
+						? { sourceJunctionPort: 0, targetJunctionPort: 1, segmentOrientation: 'horizontal' as const }
+						: { sourceJunctionPort: 1, targetJunctionPort: 0, segmentOrientation: 'horizontal' as const }
+				);
+
+		const tangentOffset = Math.max(2, Math.min(8, closestPoint.totalLength / 24));
+		const before = pathEl.getPointAtLength(Math.max(0, closestPoint.length - tangentOffset));
+		const after = pathEl.getPointAtLength(Math.min(closestPoint.totalLength, closestPoint.length + tangentOffset));
+		const dx = after.x - before.x;
+		const dy = after.y - before.y;
+
+		if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) {
+			return { ...fallback, closestPoint: { x: closestPoint.x, y: closestPoint.y } };
+		}
+
+		if (Math.abs(dx) >= Math.abs(dy)) {
+			return {
+				sourceJunctionPort: dx >= 0 ? 0 : 1,
+				targetJunctionPort: dx >= 0 ? 1 : 0,
+				segmentOrientation: 'horizontal',
+				closestPoint: { x: closestPoint.x, y: closestPoint.y }
+			};
+		}
+
+		return {
+			sourceJunctionPort: dy >= 0 ? 2 : 3,
+			targetJunctionPort: dy >= 0 ? 3 : 2,
+			segmentOrientation: 'vertical',
+			closestPoint: { x: closestPoint.x, y: closestPoint.y }
+		};
+	}
+
+	function resolvePortConnectionBranchPreview(): PortConnectionBranchPreview | null {
+		if (
+			!portConnectionDrag.active ||
+			!portConnectionDrag.sourceNodeId ||
+			portConnectionDrag.sourcePortIndex === null ||
+			!portConnectionDrag.sourceFlowPosition ||
+			!portConnectionDrag.sourceHandlePosition ||
+			!portConnectionDrag.domain ||
+			!portConnectionDrag.junctionType
+		) {
+			return null;
+		}
+		const dragSourceNodeId = portConnectionDrag.sourceNodeId;
+		const dragSourcePortIndex = portConnectionDrag.sourcePortIndex;
+		const pointerFlowPosition = screenToFlow(mousePosition);
+		const { domain, junctionType } = portConnectionDrag;
+
+		const graphNodes = get(graphStore.nodesArray);
+		const dragSourceNode = graphNodes.find((node) => node.id === dragSourceNodeId);
+		if (!dragSourceNode || isAcausalJunctionNodeType(dragSourceNode.type)) {
+			return null;
+		}
+
+		const currentConnections = get(graphStore.connections);
+		let bestPreview: PortConnectionBranchPreview | null = null;
+		let bestDistance = Number.POSITIVE_INFINITY;
+
+		const edgeElements = document.querySelectorAll<SVGGElement>('[data-branch-edge-id]');
+		for (const edgeEl of edgeElements) {
+			const edgeId = edgeEl.dataset.branchEdgeId;
+			if (!edgeId) continue;
+
+			const existingConnection = currentConnections.find(
+				(connection) => connection.id === edgeId && connection.kind === 'acausal'
+			);
+			if (!existingConnection || existingConnection.domain !== domain) continue;
+
+			if (
+				(existingConnection.sourceNodeId === dragSourceNodeId &&
+					existingConnection.sourcePortIndex === dragSourcePortIndex) ||
+				(existingConnection.targetNodeId === dragSourceNodeId &&
+					existingConnection.targetPortIndex === dragSourcePortIndex)
+			) {
+				continue;
+			}
+
+			const pathEl = edgeEl.querySelector('path') as SVGPathElement | null;
+			if (!pathEl) continue;
+
+			const placement = getPathJunctionPlacement(
+				pathEl,
+				pointerFlowPosition.x,
+				pointerFlowPosition.y,
+				portConnectionDrag.sourceHandlePosition
+			);
+			if (!placement) continue;
+
+			const closestPointScreenPosition = flowToScreen({
+				x: placement.closestPoint.x,
+				y: placement.closestPoint.y
+			});
+			const distance = Math.hypot(
+				closestPointScreenPosition.x - mousePosition.x,
+				closestPointScreenPosition.y - mousePosition.y
+			);
+			if (distance > PORT_CONNECTION_EDGE_HOVER_THRESHOLD || distance >= bestDistance) continue;
+
+			const reusableJunction = getReusableJunctionPreview(
+				existingConnection,
+				portConnectionDrag.sourceFlowPosition,
+				pointerFlowPosition
+			);
+			if (reusableJunction) {
+				bestDistance = distance;
+				bestPreview = {
+					edgeId: null,
+					domainColor: portConnectionDrag.domainColor,
+					junctionType,
+					dragSourceNodeId,
+					dragSourcePortIndex,
+					sourceNodeId: null,
+					sourcePortIndex: null,
+					targetNodeId: null,
+					targetPortIndex: null,
+					junctionFlowPosition: reusableJunction.junctionFlowPosition,
+					junctionScreenPosition: reusableJunction.junctionScreenPosition,
+					sourceJunctionPort: null,
+					targetJunctionPort: null,
+					branchPort: reusableJunction.branchPort,
+					segmentOrientation: placement.segmentOrientation,
+					existingJunctionNodeId: reusableJunction.junctionNodeId
+				};
+				continue;
+			}
+
+			const junctionScreenPosition = flowToScreen({
+				x: placement.closestPoint.x,
+				y: placement.closestPoint.y
+			});
+
+			const branchPort = getAvailablePreviewJunctionPort(
+				getPreferredPositionFromDelta(
+					portConnectionDrag.sourceFlowPosition.x - placement.closestPoint.x,
+					portConnectionDrag.sourceFlowPosition.y - placement.closestPoint.y
+				),
+				new Set([placement.sourceJunctionPort, placement.targetJunctionPort])
+			);
+			if (branchPort === null) continue;
+
+			bestDistance = distance;
+			bestPreview = {
+				edgeId,
+				domainColor: portConnectionDrag.domainColor,
+				junctionType,
+				dragSourceNodeId,
+				dragSourcePortIndex,
+				sourceNodeId: existingConnection.sourceNodeId,
+				sourcePortIndex: existingConnection.sourcePortIndex,
+				targetNodeId: existingConnection.targetNodeId,
+				targetPortIndex: existingConnection.targetPortIndex,
+				junctionFlowPosition: { x: placement.closestPoint.x, y: placement.closestPoint.y },
+				junctionScreenPosition,
+				sourceJunctionPort: placement.sourceJunctionPort,
+				targetJunctionPort: placement.targetJunctionPort,
+				branchPort,
+				segmentOrientation: placement.segmentOrientation,
+				existingJunctionNodeId: null
+			};
+		}
+
+		return bestPreview;
+	}
+
+	function getPreferredJunctionDropPosition(nodeEl: HTMLElement, clientX: number, clientY: number): Position {
+		const rect = nodeEl.getBoundingClientRect();
+		const centerX = rect.left + rect.width / 2;
+		const centerY = rect.top + rect.height / 2;
+		const dx = clientX - centerX;
+		const dy = clientY - centerY;
+
+		if (Math.abs(dx) >= Math.abs(dy)) {
+			return dx >= 0 ? Position.Right : Position.Left;
+		}
+
+		return dy >= 0 ? Position.Bottom : Position.Top;
+	}
+
+	function getPreviewTargetPosition(sourcePosition: Position): Position {
+		const origin = branchDrag.junctionScreenPosition;
+		const current = branchDrag.currentScreenPosition ?? origin;
+		if (!origin || !current) return Position.Left;
+
+		const dx = current.x - origin.x;
+		const dy = current.y - origin.y;
+
+		if (Math.abs(dx) >= Math.abs(dy)) {
+			return dx >= 0 ? Position.Left : Position.Right;
+		}
+
+		return dy >= 0 ? Position.Top : Position.Bottom;
+	}
+
+	function getBranchPreviewPath(): string | null {
+		const origin = branchDrag.junctionScreenPosition;
+		const current = branchDrag.currentScreenPosition ?? origin;
+		if (!branchDrag.active || !origin || !current) return null;
+
+		const sourcePosition = getBranchPreviewSourcePosition();
+		const targetPosition = getPreviewTargetPosition(sourcePosition);
+		const [path] = getSmoothStepPath({
+			sourceX: origin.x,
+			sourceY: origin.y,
+			sourcePosition,
+			targetX: current.x,
+			targetY: current.y,
+			targetPosition,
+			borderRadius: 8
+		});
+		return path;
 	}
 
 	// Helper to get port position and direction in world coordinates
@@ -329,7 +919,11 @@
 	// Update routing context and recalculate all routes
 	function updateRoutingContext() {
 		// Only include block nodes (not events or annotations) for routing
-		const blockNodesForRouting = nodes.filter(n => n.type === 'pathview');
+		const blockNodesForRouting = nodes.filter(
+			(n) =>
+				n.type === 'pathview' &&
+				!isAcausalJunctionNodeType((n.data as NodeInstance).type)
+		);
 		if (blockNodesForRouting.length === 0) {
 			routingStore.clearRoutes();
 			return;
@@ -367,9 +961,10 @@
 		annotation: AnnotationNode
 	};
 
-	// Custom edge types - orthogonal routing with arrow
+	// Custom edge types - orthogonal routing with arrow (causal) or bezier line (acausal)
 	const edgeTypes: EdgeTypes = {
-		orthogonal: OrthogonalEdge
+		orthogonal: OrthogonalEdge,
+		acausal: AcausalEdge
 	};
 
 	// SvelteFlow state - this is the source of truth for visual state
@@ -401,6 +996,8 @@
 
 	// Track if we're currently syncing to prevent loops
 	let isSyncing = false;
+	let isAutoOptimizingJunctions = false;
+	let pendingJunctionAutoOptimize: ReturnType<typeof setTimeout> | null = null;
 
 	// Track if initial load is complete (positions from graph store should be used until first render)
 	let initialLoadComplete = false;
@@ -642,6 +1239,24 @@
 		// Recalculate routes when connections change
 		// Use setTimeout to ensure nodes are updated first
 		setTimeout(() => updateRoutingContext(), 0);
+
+		if (isAutoOptimizingJunctions) return;
+		if (pendingJunctionAutoOptimize) {
+			clearTimeout(pendingJunctionAutoOptimize);
+		}
+		pendingJunctionAutoOptimize = setTimeout(() => {
+			pendingJunctionAutoOptimize = null;
+			const hasJunctions = get(graphStore.nodesArray).some((node) => isAcausalJunctionNodeType(node.type));
+			const hasAcausalConnections = get(graphStore.connections).some((connection) => connection.kind === 'acausal');
+			if (!hasJunctions || !hasAcausalConnections) return;
+
+			isAutoOptimizingJunctions = true;
+			try {
+				graphStore.optimizeAllJunctionPorts();
+			} finally {
+				isAutoOptimizingJunctions = false;
+			}
+		}, 0);
 	}));
 
 	// Track last snapped positions during drag for discrete routing updates
@@ -666,6 +1281,7 @@
 		for (const node of draggedNodes) {
 			// Skip non-block nodes (events, annotations don't affect routing)
 			if (node.type !== 'pathview') continue;
+			if (isAcausalJunctionNodeType((node.data as NodeInstance).type)) continue;
 
 			const snappedX = Math.round(node.position.x / GRID_SIZE) * GRID_SIZE;
 			const snappedY = Math.round(node.position.y / GRID_SIZE) * GRID_SIZE;
@@ -695,9 +1311,10 @@
 	}
 
 	// Handle node drag end - sync position back to store and finalize undo entry
-	function handleNodeDragStop({ targetNode }: { targetNode: Node | null; nodes: Node[]; event: MouseEvent | TouchEvent }) {
+	function handleNodeDragStop({ targetNode, nodes: draggedNodes }: { targetNode: Node | null; nodes: Node[]; event: MouseEvent | TouchEvent }) {
 		// Clear drag position tracking
 		lastDraggedPositions.clear();
+		let movedJunctionId: string | null = null;
 
 		if (targetNode?.id && targetNode?.position) {
 			isSyncing = true;
@@ -712,13 +1329,26 @@
 				graphStore.updateAnnotationPosition(targetNode.id, targetNode.position);
 			} else {
 				graphStore.updateNodePosition(targetNode.id, targetNode.position);
+				if (isAcausalJunctionNodeType((targetNode.data as NodeInstance).type)) {
+					movedJunctionId = targetNode.id;
+				}
 			}
 			isSyncing = false;
+		}
+		if (movedJunctionId) {
+			graphStore.optimizeJunctionPorts(movedJunctionId);
 		}
 		historyStore.endDrag();
 
 		// Update routing context and recalculate routes (final)
-		updateRoutingContext();
+		const draggedRoutingNode = draggedNodes.some(
+			(node) =>
+				node.type === 'pathview' &&
+				!isAcausalJunctionNodeType((node.data as NodeInstance).type)
+		);
+		if (draggedRoutingNode) {
+			updateRoutingContext();
+		}
 	}
 
 	// Handle node and edge delete
@@ -784,7 +1414,8 @@
 
 		// Filter out deleted nodes from current node arrays
 		const deletedIds = new Set(deletedNodes.map(n => n.id));
-		blockNodes = blockNodes.filter(n => !deletedIds.has(n.id));
+		const remainingGraphNodeIds = new Set(get(graphStore.nodesArray).map((node) => node.id));
+		blockNodes = blockNodes.filter(n => remainingGraphNodeIds.has(n.id));
 		eventNodes = eventNodes.filter(n => !deletedIds.has(n.id));
 		annotationNodes = annotationNodes.filter(n => !deletedIds.has(n.id));
 
@@ -795,10 +1426,86 @@
 		isSyncing = false;
 	}
 
+	// Validate connections before they are created.
+	// Blocks causal↔acausal mixing and cross-domain acausal connections.
+	function isValidConnection(connection: FlowConnection): boolean {
+		const { source, target, sourceHandle, targetHandle } = connection;
+		if (!source || !target || source === target) return false;
+
+		const graphNodes = get(graphStore.nodesArray);
+		const sourceNode = graphNodes.find(n => n.id === source);
+		const targetNode = graphNodes.find(n => n.id === target);
+		if (!sourceNode || !targetNode) return false;
+
+		const sourceDef = nodeRegistry.get(sourceNode.type);
+		const targetDef = nodeRegistry.get(targetNode.type);
+		if (!sourceDef || !targetDef) return false;
+
+		const sourceIsAcausal = !!sourceDef.acausalDomain;
+		const targetIsAcausal = !!targetDef.acausalDomain;
+
+		// Both must be the same kind (causal↔causal or acausal↔acausal)
+		if (sourceIsAcausal !== targetIsAcausal) return false;
+
+		// Acausal connections must share the same physical domain
+		if (sourceIsAcausal && sourceDef.acausalDomain !== targetDef.acausalDomain) return false;
+
+		if (sourceIsAcausal) {
+			const currentConnections = get(graphStore.connections);
+			const sourcePortIndex = sourceHandle ? HANDLE_ID.parseIndex(sourceHandle, 'acausal') : null;
+			const targetPortIndex = targetHandle ? HANDLE_ID.parseIndex(targetHandle, 'acausal') : null;
+
+			const isPortOccupied = (nodeId: string, portIndex: number) =>
+				currentConnections.some(
+					(c) =>
+						c.kind === 'acausal' &&
+						(
+							(c.sourceNodeId === nodeId && c.sourcePortIndex === portIndex) ||
+							(c.targetNodeId === nodeId && c.targetPortIndex === portIndex)
+						)
+				);
+
+			if (
+				sourcePortIndex !== null &&
+				isAcausalJunctionNodeType(sourceNode.type) &&
+				isPortOccupied(source, sourcePortIndex)
+			) {
+				return false;
+			}
+
+			if (
+				targetPortIndex !== null &&
+				isAcausalJunctionNodeType(targetNode.type) &&
+				isPortOccupied(target, targetPortIndex)
+			) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	// Handle new connections
 	function handleConnect(connection: FlowConnection) {
 		if (!connection.source || !connection.target) return;
 		if (!connection.sourceHandle || !connection.targetHandle) return;
+
+		// Acausal connection: with ConnectionMode.Loose, both handles are source type (-acausal-N)
+		const acausalSourceIndex = HANDLE_ID.parseIndex(connection.sourceHandle, 'acausal');
+		const acausalTargetIndex = HANDLE_ID.parseIndex(connection.targetHandle, 'acausal');
+
+		if (acausalSourceIndex !== null && acausalTargetIndex !== null) {
+			historyStore.mutate(() => {
+				graphStore.addConnection(
+					connection.source!,
+					acausalSourceIndex,
+					connection.target!,
+					acausalTargetIndex,
+					'acausal'
+				);
+			});
+			return;
+		}
 
 		const sourceMatch = connection.sourceHandle.match(/-output-(\d+)$/);
 		const targetMatch = connection.targetHandle.match(/-input-(\d+)$/);
@@ -848,6 +1555,385 @@
 				);
 			});
 		}
+	}
+
+	function handleConnectStart(event: MouseEvent | TouchEvent, params: OnConnectStartParams) {
+		const sourceNodeId = params.nodeId;
+		const handleId = params.handleId;
+		const sourcePortIndex = handleId ? HANDLE_ID.parseIndex(handleId, 'acausal') : null;
+		if (!sourceNodeId || sourcePortIndex === null) {
+			portConnectionDrag = {
+				active: false,
+				sourceNodeId: null,
+				sourcePortIndex: null,
+				sourceFlowPosition: null,
+				sourceHandlePosition: null,
+				domain: null,
+				domainColor: ACAUSAL_DOMAIN_COLORS.default,
+				junctionType: null
+			};
+			return;
+		}
+
+		const graphNodes = get(graphStore.nodesArray);
+		const sourceNode = graphNodes.find((node) => node.id === sourceNodeId);
+		if (!sourceNode || isAcausalJunctionNodeType(sourceNode.type)) {
+			portConnectionDrag = {
+				active: false,
+				sourceNodeId: null,
+				sourcePortIndex: null,
+				sourceFlowPosition: null,
+				sourceHandlePosition: null,
+				domain: null,
+				domainColor: ACAUSAL_DOMAIN_COLORS.default,
+				junctionType: null
+			};
+			return;
+		}
+
+		const sourceDef = nodeRegistry.get(sourceNode.type);
+		const domain = sourceDef?.acausalDomain;
+		const junctionType = domain ? getAcausalJunctionType(domain) : null;
+		if (!domain || !junctionType) {
+			portConnectionDrag = {
+				active: false,
+				sourceNodeId: null,
+				sourcePortIndex: null,
+				sourceFlowPosition: null,
+				sourceHandlePosition: null,
+				domain: null,
+				domainColor: ACAUSAL_DOMAIN_COLORS.default,
+				junctionType: null
+			};
+			return;
+		}
+
+		const handleEl = (event.target as HTMLElement | null)?.closest('.svelte-flow__handle') as HTMLElement | null;
+		const rect = handleEl?.getBoundingClientRect();
+		const sourceScreenPosition = rect
+			? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+			: mousePosition;
+		const sourceFlowPosition = screenToFlow(sourceScreenPosition);
+		const handlePos = handleEl?.dataset.handlepos;
+		const sourceHandlePosition =
+			handlePos === 'left'
+				? Position.Left
+				: handlePos === 'right'
+					? Position.Right
+					: handlePos === 'top'
+						? Position.Top
+						: handlePos === 'bottom'
+							? Position.Bottom
+							: null;
+
+		portConnectionDrag = {
+			active: true,
+			sourceNodeId,
+			sourcePortIndex,
+			sourceFlowPosition,
+			sourceHandlePosition,
+			domain,
+			domainColor: ACAUSAL_DOMAIN_COLORS[domain] ?? ACAUSAL_DOMAIN_COLORS.default,
+			junctionType
+		};
+	}
+
+	function handleConnectEnd(_event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) {
+		const preview = portConnectionBranchPreview;
+		portConnectionDrag = {
+			active: false,
+			sourceNodeId: null,
+			sourcePortIndex: null,
+			sourceFlowPosition: null,
+			sourceHandlePosition: null,
+			domain: null,
+			domainColor: ACAUSAL_DOMAIN_COLORS.default,
+			junctionType: null
+		};
+		portConnectionBranchPreview = null;
+		if (!preview || connectionState.toHandle) return;
+
+		historyStore.mutate(() => {
+			if (preview.existingJunctionNodeId) {
+				graphStore.addConnection(
+					preview.dragSourceNodeId,
+					preview.dragSourcePortIndex,
+					preview.existingJunctionNodeId,
+					preview.branchPort,
+					'acausal'
+				);
+				return;
+			}
+
+			const currentConnections = get(graphStore.connections);
+			if (!preview.edgeId || !currentConnections.some((connection) => connection.id === preview.edgeId)) {
+				return;
+			}
+
+			if (
+				preview.sourceNodeId === null ||
+				preview.sourcePortIndex === null ||
+				preview.targetNodeId === null ||
+				preview.targetPortIndex === null ||
+				preview.sourceJunctionPort === null ||
+				preview.targetJunctionPort === null
+			) return;
+
+			const junctionNode = graphStore.splitAcausalConnectionWithJunction(
+				preview.edgeId,
+				preview.junctionType,
+				preview.junctionFlowPosition,
+				preview.sourceJunctionPort,
+				preview.targetJunctionPort
+			);
+			if (!junctionNode) return;
+
+			graphStore.addConnection(
+				preview.dragSourceNodeId,
+				preview.dragSourcePortIndex,
+				junctionNode.id,
+				preview.branchPort,
+				'acausal'
+			);
+		});
+	}
+
+	function resolveBranchDropTarget(event: MouseEvent): { nodeId: string; portIndex: number } | null {
+		const hoveredPortIndex = currentHoveredHandle
+			? HANDLE_ID.parseIndex(currentHoveredHandle.handleId, 'acausal')
+			: null;
+		if (currentHoveredHandle && hoveredPortIndex !== null) {
+			return { nodeId: currentHoveredHandle.nodeId, portIndex: hoveredPortIndex };
+		}
+
+		const handleEl = document
+			.elementFromPoint(event.clientX, event.clientY)
+			?.closest('.svelte-flow__handle') as HTMLElement | null;
+		if (handleEl) {
+			const nodeId = handleEl.dataset.nodeid;
+			const handleId = handleEl.dataset.handleid;
+			if (nodeId && handleId) {
+				const portIndex = HANDLE_ID.parseIndex(handleId, 'acausal');
+				if (portIndex !== null) {
+					return { nodeId, portIndex };
+				}
+			}
+		}
+
+		const nodeEl = document
+			.elementFromPoint(event.clientX, event.clientY)
+			?.closest('.svelte-flow__node') as HTMLElement | null;
+		const nodeId = nodeEl?.dataset.id;
+		if (!nodeEl || !nodeId) return null;
+
+		const graphNodes = get(graphStore.nodesArray);
+		const targetNode = graphNodes.find((node) => node.id === nodeId);
+		if (!targetNode || !isAcausalJunctionNodeType(targetNode.type)) return null;
+
+		const preferredPosition = getPreferredJunctionDropPosition(nodeEl, event.clientX, event.clientY);
+		const portIndex = getAvailableJunctionBranchPort(nodeId, preferredPosition);
+		return portIndex === null ? null : { nodeId, portIndex };
+	}
+
+	function isValidBranchDropTarget(target: { nodeId: string; portIndex: number }): boolean {
+		if (branchDrag.mode === 'junction' && target.nodeId === branchDrag.junctionNodeId) {
+			return false;
+		}
+		if (
+			target.nodeId === branchDrag.sourceNodeId && target.portIndex === branchDrag.sourcePortIndex ||
+			target.nodeId === branchDrag.targetNodeId && target.portIndex === branchDrag.targetPortIndex
+		) {
+			return false;
+		}
+
+		const graphNodes = get(graphStore.nodesArray);
+		const targetNode = graphNodes.find((node) => node.id === target.nodeId);
+		if (!targetNode) return false;
+
+		const targetDef = nodeRegistry.get(targetNode.type);
+		if (!targetDef?.acausalDomain || targetDef.acausalDomain !== branchDrag.domain) {
+			return false;
+		}
+
+		if (isAcausalJunctionNodeType(targetNode.type)) {
+			const currentConnections = get(graphStore.connections);
+			const targetPortOccupied = currentConnections.some(
+				(connection) =>
+					connection.kind === 'acausal' &&
+					(
+						(connection.sourceNodeId === target.nodeId && connection.sourcePortIndex === target.portIndex) ||
+						(connection.targetNodeId === target.nodeId && connection.targetPortIndex === target.portIndex)
+					)
+			);
+			if (targetPortOccupied) return false;
+		}
+
+		return true;
+	}
+
+	function handleGlobalPointerMove(event: PointerEvent) {
+		mousePosition = { x: event.clientX, y: event.clientY };
+		if (!branchDrag.active) return;
+		branchDragStore.updatePointer({ x: event.clientX, y: event.clientY });
+	}
+
+	function handleBranchDragPointerUp(event: PointerEvent) {
+		if (!branchDrag.active) return;
+
+		branchDragStore.updatePointer({ x: event.clientX, y: event.clientY });
+		const dropTarget = resolveBranchDropTarget(event);
+		const wireDropPreview = dropTarget ? null : resolveBranchWireDropPreview();
+		const previewSourcePosition = getBranchPreviewSourcePosition();
+		const branchPort =
+			branchDrag.mode === 'junction' && branchDrag.junctionNodeId
+				? getAvailableJunctionBranchPort(branchDrag.junctionNodeId, previewSourcePosition)
+				: getBranchJunctionPort(previewSourcePosition);
+
+		if (
+			dropTarget &&
+			branchPort !== null &&
+			isValidBranchDropTarget(dropTarget)
+		) {
+			historyStore.mutate(() => {
+				if (branchDrag.mode === 'edge') {
+					if (
+						!branchDrag.edgeId ||
+						!branchDrag.junctionType ||
+						!branchDrag.sourceNodeId ||
+						branchDrag.sourcePortIndex === null ||
+						!branchDrag.targetNodeId ||
+						branchDrag.targetPortIndex === null ||
+						!branchDrag.junctionFlowPosition ||
+						branchDrag.sourceJunctionPort === null ||
+						branchDrag.targetJunctionPort === null
+					) {
+						return;
+					}
+
+					const currentConnections = get(graphStore.connections);
+					if (!currentConnections.some((connection) => connection.id === branchDrag.edgeId)) {
+						return;
+					}
+
+					const junctionNode = graphStore.splitAcausalConnectionWithJunction(
+						branchDrag.edgeId,
+						branchDrag.junctionType,
+						branchDrag.junctionFlowPosition,
+						branchDrag.sourceJunctionPort,
+						branchDrag.targetJunctionPort
+					);
+					if (!junctionNode) return;
+
+					graphStore.addConnection(
+						junctionNode.id,
+						branchPort,
+						dropTarget.nodeId,
+						dropTarget.portIndex,
+						'acausal'
+					);
+					return;
+				}
+
+				if (branchDrag.mode === 'junction' && branchDrag.junctionNodeId) {
+					graphStore.addConnection(
+						branchDrag.junctionNodeId,
+						branchPort,
+						dropTarget.nodeId,
+						dropTarget.portIndex,
+						'acausal'
+					);
+				}
+			});
+		} else if (wireDropPreview && branchPort !== null) {
+			historyStore.mutate(() => {
+				let sourceJunctionNodeId: string | null = null;
+
+				if (branchDrag.mode === 'edge') {
+					if (
+						!branchDrag.edgeId ||
+						!branchDrag.junctionType ||
+						!branchDrag.sourceNodeId ||
+						branchDrag.sourcePortIndex === null ||
+						!branchDrag.targetNodeId ||
+						branchDrag.targetPortIndex === null ||
+						!branchDrag.junctionFlowPosition ||
+						branchDrag.sourceJunctionPort === null ||
+						branchDrag.targetJunctionPort === null
+					) {
+						return;
+					}
+
+					const currentConnections = get(graphStore.connections);
+					if (!currentConnections.some((connection) => connection.id === branchDrag.edgeId)) {
+						return;
+					}
+
+					const sourceJunctionNode = graphStore.splitAcausalConnectionWithJunction(
+						branchDrag.edgeId,
+						branchDrag.junctionType,
+						branchDrag.junctionFlowPosition,
+						branchDrag.sourceJunctionPort,
+						branchDrag.targetJunctionPort
+					);
+					if (!sourceJunctionNode) return;
+					sourceJunctionNodeId = sourceJunctionNode.id;
+				} else if (branchDrag.mode === 'junction' && branchDrag.junctionNodeId) {
+					sourceJunctionNodeId = branchDrag.junctionNodeId;
+				}
+
+				if (!sourceJunctionNodeId) return;
+
+				if (wireDropPreview.existingJunctionNodeId) {
+					graphStore.addConnection(
+						sourceJunctionNodeId,
+						branchPort,
+						wireDropPreview.existingJunctionNodeId,
+						wireDropPreview.branchPort,
+						'acausal'
+					);
+					return;
+				}
+
+				const currentConnections = get(graphStore.connections);
+				if (
+					!wireDropPreview.edgeId ||
+					!wireDropPreview.sourceNodeId ||
+					wireDropPreview.sourcePortIndex === null ||
+					!wireDropPreview.targetNodeId ||
+					wireDropPreview.targetPortIndex === null ||
+					wireDropPreview.sourceJunctionPort === null ||
+					wireDropPreview.targetJunctionPort === null ||
+					!currentConnections.some((connection) => connection.id === wireDropPreview.edgeId)
+				) {
+					return;
+				}
+
+				const targetJunctionType =
+					branchDrag.junctionType ?? (branchDrag.domain ? getAcausalJunctionType(branchDrag.domain) : null);
+				if (!targetJunctionType) return;
+
+				const targetJunctionNode = graphStore.splitAcausalConnectionWithJunction(
+					wireDropPreview.edgeId,
+					targetJunctionType,
+					wireDropPreview.junctionFlowPosition,
+					wireDropPreview.sourceJunctionPort,
+					wireDropPreview.targetJunctionPort
+				);
+				if (!targetJunctionNode) return;
+
+				graphStore.addConnection(
+					sourceJunctionNodeId,
+					branchPort,
+					targetJunctionNode.id,
+					wireDropPreview.branchPort,
+					'acausal'
+				);
+			});
+		}
+
+		branchWireDropPreview = null;
+		branchDragStore.cancel();
+		setTimeout(() => branchDragStore.clearContextMenuSuppression(), 0);
 	}
 
 	// Handle selection changes - sync from SvelteFlow to stores
@@ -916,6 +2002,8 @@
 	// Context menu handlers - SvelteFlow passes { event, node/edge } objects
 	function handleNodeContextMenu({ event, node }: { event: MouseEvent; node: Node }) {
 		event.preventDefault();
+		if (branchDrag.suppressContextMenu) return;
+		if (isAcausalJunctionNodeType((node.data as NodeInstance).type)) return;
 
 		// Check if this is an event node
 		if (node.type === 'eventNode') {
@@ -945,11 +2033,14 @@
 
 	function handleEdgeContextMenu({ event, edge }: { event: MouseEvent; edge: Edge }) {
 		event.preventDefault();
+		if ((edge.data as { domain?: string } | undefined)?.domain) return;
+		if (branchDrag.suppressContextMenu) return;
 		contextMenuStore.openForEdge(edge.id, { x: event.clientX, y: event.clientY });
 	}
 
 	function handlePaneContextMenu({ event }: { event: MouseEvent }) {
 		event.preventDefault();
+		if (branchDrag.suppressContextMenu) return;
 		contextMenuStore.openForCanvas({ x: event.clientX, y: event.clientY });
 	}
 
@@ -960,9 +2051,19 @@
 			triggerFitView();
 		}
 	}
+
+	$effect(() => {
+		portConnectionBranchPreview =
+			currentHoveredHandle || !portConnectionDrag.active ? null : resolvePortConnectionBranchPreview();
+	});
+
+	$effect(() => {
+		branchWireDropPreview =
+			currentHoveredHandle || !branchDrag.active ? null : resolveBranchWireDropPreview();
+	});
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onpointermove={handleGlobalPointerMove} onpointerup={handleBranchDragPointerUp} />
 
 <div
 	bind:this={canvasEl}
@@ -975,6 +2076,50 @@
 	ondblclick={handleCanvasDoubleClick}
 	onmousemove={handleMouseMove}
 >
+	{#if branchDrag.active && getBranchPreviewPath() && branchDrag.junctionScreenPosition}
+		<svg class="branch-preview-overlay" aria-hidden="true">
+			<circle
+				cx={branchDrag.junctionScreenPosition.x}
+				cy={branchDrag.junctionScreenPosition.y}
+				r={JUNCTION.dotSize / 2}
+				fill={branchDrag.domainColor || 'var(--accent)'}
+				class="junction-preview-dot"
+				style="--junction-dot-color: {branchDrag.domainColor || 'var(--accent)'};"
+			/>
+			<path
+				d={getBranchPreviewPath()}
+				class="branch-preview-path"
+				style="stroke: {branchDrag.domainColor || 'var(--accent)'};"
+			/>
+		</svg>
+	{/if}
+
+	{#if portConnectionBranchPreview}
+		<svg class="branch-preview-overlay" aria-hidden="true">
+			<circle
+				cx={portConnectionBranchPreview.junctionScreenPosition.x}
+				cy={portConnectionBranchPreview.junctionScreenPosition.y}
+				r={JUNCTION.dotSize / 2}
+				fill={portConnectionBranchPreview.domainColor}
+				class="junction-preview-dot"
+				style="--junction-dot-color: {portConnectionBranchPreview.domainColor};"
+			/>
+		</svg>
+	{/if}
+
+	{#if branchWireDropPreview}
+		<svg class="branch-preview-overlay" aria-hidden="true">
+			<circle
+				cx={branchWireDropPreview.junctionScreenPosition.x}
+				cy={branchWireDropPreview.junctionScreenPosition.y}
+				r={JUNCTION.dotSize / 2}
+				fill={branchDrag.domainColor || 'var(--accent)'}
+				class="junction-preview-dot"
+				style="--junction-dot-color: {branchDrag.domainColor || 'var(--accent)'};"
+			/>
+		</svg>
+	{/if}
+
 	{#if isFileDragOver}
 		<div class="drop-zone-overlay">
 			<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -990,6 +2135,10 @@
 		{nodeTypes}
 		{edgeTypes}
 		onconnect={handleConnect}
+		onconnectstart={handleConnectStart}
+		onconnectend={handleConnectEnd}
+		{isValidConnection}
+		connectionMode={ConnectionMode.Loose}
 		onnodedragstart={handleNodeDragStart}
 		onnodedrag={handleNodeDrag}
 		onnodedragstop={handleNodeDragStop}
@@ -1023,6 +2172,28 @@
 		width: 100%;
 		height: 100%;
 		position: relative;
+	}
+
+	.branch-preview-overlay {
+		position: fixed;
+		inset: 0;
+		width: 100vw;
+		height: 100vh;
+		pointer-events: none;
+		z-index: 20;
+		overflow: visible;
+	}
+
+	.branch-preview-path {
+		fill: none;
+		stroke-width: 1.75;
+		stroke-dasharray: 5 5;
+	}
+
+	.junction-preview-dot {
+		stroke: var(--surface);
+		stroke-width: 2;
+		filter: drop-shadow(0 0 4px color-mix(in srgb, var(--junction-dot-color, var(--accent)) 45%, transparent));
 	}
 
 	.drop-zone-overlay {

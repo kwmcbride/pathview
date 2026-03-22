@@ -28,12 +28,16 @@ import { plotSettingsStore, DEFAULT_BLOCK_SETTINGS } from '$lib/stores/plotSetti
 import { portLabelsStore } from '$lib/stores/portLabels';
 import { getEffectivePortLabelVisibility } from '$lib/utils/portLabels';
 import type { NodeInstance } from '$lib/types/nodes';
+import { isAcausalJunctionNodeType, nodeRegistry } from '$lib/nodes/registry';
 
 /** Divider menu item */
 const DIVIDER: MenuItemType = { label: '', action: () => {}, divider: true };
 
 /** Build port label toggle menu items for a node */
 function buildPortLabelItems(nodeId: string, node: NodeInstance): MenuItemType[] {
+	const isAcausal = !!nodeRegistry.get(node.type)?.acausalDomain;
+	if (isAcausal && !isAcausalJunctionNodeType(node.type)) return [];
+
 	const globalLabels = get(portLabelsStore);
 	const { inputs: showInputLabels, outputs: showOutputLabels } = getEffectivePortLabelVisibility(node, globalLabels);
 	const hasInputs = node.inputs && node.inputs.length > 0;

@@ -1,10 +1,19 @@
 {
   "$schema": "../schemas/blocks.schema.json",
   "toolbox": "pathsim-chem",
-  "importPath": "pathsim_chem.tritium",
+  "importPath": "pathsim_chem",
 
   "categories": {
-    "Chemical": [
+    "Process": [
+      "Mixer",
+      "FlashDrum",
+      "CSTR",
+      "BatchReactor",
+      "HeatExchanger",
+      "Compressor",
+      "Pump"
+    ],
+    "Tritium": [
       "Process",
       "Bubbler4",
       "Splitter",

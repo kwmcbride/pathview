@@ -1,0 +1,29 @@
+{
+  "$schema": "../schemas/blocks.schema.json",
+  "toolbox": "pathsim-acausal",
+  "importPath": "pathsim.acausal.lib",
+
+  "categories": {
+    "Electrical": [
+      "Resistor",
+      "Capacitor",
+      "Inductor",
+      "VoltageSource",
+      "CurrentSource",
+      "Ground"
+    ],
+    "Gas": [
+      "Atmosphere",
+      "FixedVolume",
+      "Orifice"
+    ],
+    "GasStream": [
+      "AtmosphereStream",
+      "FixedVolumeStream",
+      "OrificeStream",
+      "InertialOrificeStream",
+      "GasJunctionStream",
+      "PlenumStream"
+    ]
+  }
+}

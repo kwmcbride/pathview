@@ -11,7 +11,6 @@ import type { Backend, BackendState } from '../types';
 import { backendState } from '../state';
 import { TIMEOUTS } from '$lib/constants/python';
 import { STATUS_MESSAGES } from '$lib/constants/messages';
-import { PYTHON_PACKAGES } from '$lib/constants/dependencies';
 
 /** Delay between polls (ms).  The server uses long-polling (blocks up
  *  to 100 ms until data arrives), so data delivery is near-instant.
@@ -342,13 +341,16 @@ export class FlaskBackend implements Backend {
 	 * Shared by init() (first load with progress UI) and ensureServerInit() (lazy re-init).
 	 */
 	private async postInit(opts: { updateProgress: boolean }): Promise<void> {
+		// Pass empty packages — the Flask venv is pre-configured by the server install.
+		// Passing PYTHON_PACKAGES would cause the worker to pip-install Pyodide-only
+		// specs (e.g. /wheel-url paths) and optional packages from PyPI, which hangs.
 		const resp = await fetch(`${this.host}/api/init`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
 				'X-Session-ID': this.sessionId
 			},
-			body: JSON.stringify({ packages: PYTHON_PACKAGES }),
+			body: JSON.stringify({ packages: [] }),
 			signal: AbortSignal.timeout(TIMEOUTS.INIT)
 		});
 		const data = await resp.json();

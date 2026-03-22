@@ -20,7 +20,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "server": "python -m pathview_server.app",
-    "build:package": "python scripts/build_package.py"
+    "build:package": "python scripts/build_package.py",
+    "extract:acausal": "python scripts/extract.py --acausal"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.0",
