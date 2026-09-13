@@ -2,17 +2,15 @@
  * Routing engine - incremental orthogonal routing on the canvas grid
  *
  * Framework free so it can run in a worker. Connections are searched with
- * congestion costs from the other nets (negotiated congestion routing), a
- * negotiation loop re-searches nets that still share grid lines, and a final
- * nudging pass separates the remaining overlaps into lanes. After changes only
- * affected nets are searched again.
+ * congestion costs from the other nets (negotiated congestion routing) and a
+ * negotiation loop re-searches nets that still share grid lines. After changes
+ * only affected nets are searched again and only their routes are published.
  */
 
 import type { Bounds, PortInfo, PortStub, RouteRequest, RouteResult, RoutingScene } from './types';
 import { ObstacleMap } from './obstacleMap';
 import { Occupancy, collectCells } from './occupancy';
 import { searchGridPath } from './search';
-import { nudgeRoutes, simplifyGridPath, type NudgeRoute } from './nudge';
 import {
 	DIRECTION_INDEX,
 	DX,
@@ -20,6 +18,7 @@ import {
 	OPPOSITE,
 	toGrid,
 	fromGrid,
+	simplifyGridPath,
 	type GridPoint,
 	type GridRect
 } from './gridTypes';
@@ -28,7 +27,7 @@ import { GRID_SIZE, ROUTING_MARGIN, SOURCE_CLEARANCE, TARGET_CLEARANCE } from '.
 /** Cells walkable in front of a port so routes can pass the node margin */
 const PORT_EXIT_CELLS = 3;
 
-/** Cells around a changed node within which existing routes are searched again */
+/** Cells around a node's previous position within which routes are searched again */
 const REROUTE_PADDING = 2;
 
 /** Tile size (cells) of the spatial index over routes */
@@ -46,8 +45,6 @@ const NEGOTIATION_PROGRESS = 0.8;
 export interface RoutingEngineOptions {
 	/** Search with congestion costs from other nets (default true) */
 	congestion?: boolean;
-	/** Separate remaining overlaps into lanes (default true) */
-	nudge?: boolean;
 }
 
 export interface UpdateOptions {
@@ -134,23 +131,47 @@ function samePort(a: PortInfo, b: PortInfo): boolean {
 	return a.direction === b.direction && a.position.x === b.position.x && a.position.y === b.position.y;
 }
 
-function sameRequest(a: RouteRequest, b: RouteRequest): boolean {
-	if (a.netId !== b.netId || !samePort(a.source, b.source) || !samePort(a.target, b.target)) return false;
-	if (a.waypoints.length !== b.waypoints.length) return false;
-	for (let i = 0; i < a.waypoints.length; i++) {
-		const p = a.waypoints[i].position;
-		const q = b.waypoints[i].position;
-		if (p.x !== q.x || p.y !== q.y) return false;
+function sameWaypoints(a: RouteRequest['waypoints'], b: RouteRequest['waypoints']): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i].position.x !== b[i].position.x || a[i].position.y !== b[i].position.y) return false;
 	}
 	return true;
 }
 
-function samePath(a: RouteResult, b: RouteResult): boolean {
-	if (a.isFallback !== b.isFallback || a.path.length !== b.path.length || a.waypoints !== b.waypoints) return false;
+function sameRequest(a: RouteRequest, b: RouteRequest): boolean {
+	return (
+		a.netId === b.netId &&
+		samePort(a.source, b.source) &&
+		samePort(a.target, b.target) &&
+		sameWaypoints(a.waypoints, b.waypoints)
+	);
+}
+
+function sameResult(a: RouteResult, b: RouteResult): boolean {
+	if (a.isFallback !== b.isFallback || a.path.length !== b.path.length) return false;
+	if (!sameWaypoints(a.waypoints, b.waypoints)) return false;
 	for (let i = 0; i < a.path.length; i++) {
 		if (a.path[i].x !== b.path[i].x || a.path[i].y !== b.path[i].y) return false;
 	}
 	return true;
+}
+
+/** True if any segment of a corner path touches the inclusive rectangle */
+function pathTouches(points: GridPoint[], minGx: number, minGy: number, maxGx: number, maxGy: number): boolean {
+	for (let i = 0; i < points.length; i++) {
+		const a = points[i];
+		const b = points[Math.min(i + 1, points.length - 1)];
+		if (
+			Math.max(a.gx, b.gx) >= minGx &&
+			Math.min(a.gx, b.gx) <= maxGx &&
+			Math.max(a.gy, b.gy) >= minGy &&
+			Math.min(a.gy, b.gy) <= maxGy
+		) {
+			return true;
+		}
+	}
+	return false;
 }
 
 function tileKey(tx: number, ty: number): number {
@@ -181,15 +202,15 @@ export class RoutingEngine {
 	private readonly fallbacks = new Set<string>();
 	private readonly dirty = new Set<string>();
 	private readonly dirtyNets = new Set<string>();
+	/** Connections searched since the last publish */
+	private readonly touched = new Set<string>();
 	private readonly removedIds = new Set<string>();
-	private results = new Map<string, RouteResult>();
+	private readonly results = new Map<string, RouteResult>();
 	private changedSinceUpdate = false;
 	private readonly congestion: boolean;
-	private readonly nudge: boolean;
 
 	constructor(options: RoutingEngineOptions = {}) {
 		this.congestion = options.congestion ?? true;
-		this.nudge = options.nudge ?? true;
 	}
 
 	/** Add or move a node together with its ports */
@@ -202,8 +223,9 @@ export class RoutingEngine {
 		this.applyObstacles(entry, 1);
 		this.nodes.set(id, entry);
 
-		this.markAround(entry.rect);
-		if (old) this.markAround(old.rect);
+		// Routes now running through the node or in front of its ports, and routes that hugged the old position
+		this.markTouching(entry.rect, 1);
+		if (old) this.markTouching(old.rect, REROUTE_PADDING);
 		this.retryFallbacks();
 		this.changedSinceUpdate = true;
 	}
@@ -213,7 +235,7 @@ export class RoutingEngine {
 		if (!old) return;
 		this.applyObstacles(old, -1);
 		this.nodes.delete(id);
-		this.markAround(old.rect);
+		this.markTouching(old.rect, REROUTE_PADDING);
 		this.retryFallbacks();
 		this.changedSinceUpdate = true;
 	}
@@ -243,6 +265,7 @@ export class RoutingEngine {
 		this.requests.delete(id);
 		this.leaveNet(old.netId, id);
 		this.dirty.delete(id);
+		this.touched.delete(id);
 		this.fallbacks.delete(id);
 		this.unindex(id);
 		this.raw.delete(id);
@@ -254,7 +277,7 @@ export class RoutingEngine {
 		return this.requests.has(id);
 	}
 
-	/** Search dirty nets, optionally negotiate overlaps, separate lanes and report what changed */
+	/** Search dirty nets, optionally negotiate overlaps, and report what changed */
 	update(options: UpdateOptions = {}): RoutingUpdate {
 		const negotiate = options.negotiate ?? 0;
 		if (!this.changedSinceUpdate && negotiate === 0) return { changed: new Map(), removed: [] };
@@ -271,17 +294,7 @@ export class RoutingEngine {
 
 		if (this.congestion) this.negotiate(negotiate);
 
-		const next = this.finalize();
-		const changed = new Map<string, RouteResult>();
-		for (const [id, route] of next) {
-			const prev = this.results.get(id);
-			if (!prev || !samePath(prev, route)) changed.set(id, route);
-		}
-		const removed = [...this.removedIds];
-		this.removedIds.clear();
-		this.results = next;
-
-		return { changed, removed };
+		return this.publish();
 	}
 
 	getRoute(id: string): RouteResult | undefined {
@@ -329,6 +342,7 @@ export class RoutingEngine {
 			if (raw.isFallback) this.fallbacks.add(id);
 			else this.fallbacks.delete(id);
 			this.index(id, raw);
+			this.touched.add(id);
 			collectCells(raw.corners, cells);
 		}
 		this.occupancy.own = null;
@@ -368,6 +382,33 @@ export class RoutingEngine {
 		this.occupancy.presentCost = PRESENT_COST;
 	}
 
+	/** Convert searched routes to results and report the ones that differ */
+	private publish(): RoutingUpdate {
+		const changed = new Map<string, RouteResult>();
+		for (const id of this.touched) {
+			const raw = this.raw.get(id);
+			const request = this.requests.get(id);
+			if (!raw || !request) continue;
+			const route: RouteResult = {
+				path: raw.corners.map((p) => ({ x: fromGrid(p.gx), y: fromGrid(p.gy) })),
+				waypoints: request.waypoints,
+				isFallback: raw.isFallback
+			};
+			const previous = this.results.get(id);
+			if (!previous || !sameResult(previous, route)) {
+				this.results.set(id, route);
+				changed.set(id, route);
+			}
+		}
+		this.touched.clear();
+
+		const removed = [...this.removedIds];
+		for (const id of removed) this.results.delete(id);
+		this.removedIds.clear();
+
+		return { changed, removed };
+	}
+
 	private applyObstacles(entry: NodeEntry, delta: 1 | -1): void {
 		this.map.addRect(entry.body, 'hard', delta);
 		this.map.addRect(entry.rect, 'soft', delta);
@@ -380,16 +421,21 @@ export class RoutingEngine {
 		for (const id of this.fallbacks) this.dirty.add(id);
 	}
 
-	/** Mark routes passing near a rectangle as dirty */
-	private markAround(rect: GridRect): void {
-		const minTx = Math.floor((rect.minGx - REROUTE_PADDING) / INDEX_TILE);
-		const maxTx = Math.floor((rect.maxGx + REROUTE_PADDING) / INDEX_TILE);
-		const minTy = Math.floor((rect.minGy - REROUTE_PADDING) / INDEX_TILE);
-		const maxTy = Math.floor((rect.maxGy + REROUTE_PADDING) / INDEX_TILE);
-		for (let tx = minTx; tx <= maxTx; tx++) {
-			for (let ty = minTy; ty <= maxTy; ty++) {
+	/** Mark routes that touch a rectangle (grown by padding) as dirty */
+	private markTouching(rect: GridRect, padding: number): void {
+		const minGx = rect.minGx - padding;
+		const minGy = rect.minGy - padding;
+		const maxGx = rect.maxGx + padding;
+		const maxGy = rect.maxGy + padding;
+		for (let tx = Math.floor(minGx / INDEX_TILE); tx <= Math.floor(maxGx / INDEX_TILE); tx++) {
+			for (let ty = Math.floor(minGy / INDEX_TILE); ty <= Math.floor(maxGy / INDEX_TILE); ty++) {
 				const ids = this.routeTiles.get(tileKey(tx, ty));
-				if (ids) for (const id of ids) this.dirty.add(id);
+				if (!ids) continue;
+				for (const id of ids) {
+					if (this.dirty.has(id)) continue;
+					const raw = this.raw.get(id);
+					if (raw && pathTouches(raw.corners, minGx, minGy, maxGx, maxGy)) this.dirty.add(id);
+				}
 			}
 		}
 	}
@@ -477,32 +523,6 @@ export class RoutingEngine {
 		}
 
 		return { corners: simplifyGridPath(corners), isFallback, tiles: [] };
-	}
-
-	private finalize(): Map<string, RouteResult> {
-		const routes: NudgeRoute[] = [];
-		for (const [id, raw] of this.raw) {
-			const request = this.requests.get(id)!;
-			routes.push({
-				id,
-				netId: request.netId,
-				points: raw.corners.map((p) => ({ gx: p.gx, gy: p.gy })),
-				anchors: request.waypoints.map((w) => ({ gx: toGrid(w.position.x), gy: toGrid(w.position.y) }))
-			});
-		}
-
-		if (this.nudge) nudgeRoutes(routes, this.map);
-
-		const results = new Map<string, RouteResult>();
-		for (const route of routes) {
-			const request = this.requests.get(route.id)!;
-			results.set(route.id, {
-				path: route.points.map((p) => ({ x: fromGrid(p.gx), y: fromGrid(p.gy) })),
-				waypoints: request.waypoints,
-				isFallback: this.raw.get(route.id)!.isFallback
-			});
-		}
-		return results;
 	}
 }
 

@@ -40,3 +40,21 @@ export function toGrid(value: number): number {
 export function fromGrid(value: number): number {
 	return value * GRID_SIZE;
 }
+
+/** Remove duplicate and collinear points from a corner path */
+export function simplifyGridPath(points: GridPoint[]): GridPoint[] {
+	const result: GridPoint[] = [];
+	for (const p of points) {
+		const last = result[result.length - 1];
+		if (last && last.gx === p.gx && last.gy === p.gy) continue;
+		if (result.length >= 2) {
+			const prev = result[result.length - 2];
+			if ((prev.gx === last.gx && last.gx === p.gx) || (prev.gy === last.gy && last.gy === p.gy)) {
+				result[result.length - 1] = p;
+				continue;
+			}
+		}
+		result.push(p);
+	}
+	return result;
+}

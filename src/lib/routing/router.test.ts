@@ -56,12 +56,12 @@ describe('routing engine', () => {
 		expect(routes.size).toBe(scene.requests.length);
 	});
 
-	it('separates overlapping nets into lanes', () => {
+	it('keeps different nets off shared grid lines', () => {
 		const scene = buildScene(generateScenario({ connections: 400, rotated: 0.2, fanOut: 0.2, seed: 21 }));
-		const raw = measureRoutes(scene, routeScene(scene, { congestion: false, nudge: false, negotiate: 0 }));
-		const nudged = measureRoutes(scene, routeScene(scene));
-		expect(raw.overlapLength).toBeGreaterThan(0);
-		expect(nudged.overlapLength).toBeLessThan(raw.overlapLength * 0.5);
+		const independent = measureRoutes(scene, routeScene(scene, { congestion: false, negotiate: 0 }));
+		const negotiated = measureRoutes(scene, routeScene(scene));
+		expect(independent.overlapLength).toBeGreaterThan(0);
+		expect(negotiated.overlapLength).toBe(0);
 	});
 
 	it('does not depend on connection order', () => {
