@@ -25,7 +25,7 @@
 	import { historyStore } from '$lib/stores/history';
 	import { screenToFlow } from '$lib/utils/viewUtils';
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
-	import type { RouteResult, Direction } from '$lib/routing';
+	import type { Direction } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
 	let {
@@ -107,7 +107,7 @@
 			}
 			activeDrag.lastSnappedPos = snappedPos;
 
-			routingStore.moveWaypoint(activeDrag.edgeId, activeDrag.waypointId, snappedPos, activeDrag.getPortInfo);
+			routingStore.moveWaypoint(activeDrag.edgeId, activeDrag.waypointId, snappedPos);
 		};
 
 		const onUp = (e: PointerEvent) => {
@@ -147,20 +147,11 @@
 	function handleWaypointDoubleClick(event: MouseEvent, waypoint: Waypoint) {
 		event.stopPropagation();
 		event.preventDefault();
-		routingStore.removeUserWaypoint(id, waypoint.id, getPortInfo);
+		routingStore.removeUserWaypoint(id, waypoint.id);
 	}
 
-	// Get cached route from routing store
-	let routeResult = $state<RouteResult | null>(null);
-	let unsubscribeRoute: (() => void) | null = null;
-
-	// Subscribe to route changes using $effect to capture id reactively
-	$effect(() => {
-		// Unsubscribe from previous if any
-		if (unsubscribeRoute) unsubscribeRoute();
-		// Subscribe to new route
-		unsubscribeRoute = routingStore.getRoute(id).subscribe((r) => (routeResult = r));
-	});
+	// Route from the routing store, reactive for this connection only
+	const routeResult = $derived(routingStore.route(id) ?? null);
 
 	// Check if this edge is connected to the hovered handle
 	let hovered = $state<{ nodeId: string; handleId: string; color?: string } | null>(null);
@@ -172,7 +163,6 @@
 
 	// Cleanup all subscriptions on destroy
 	onDestroy(() => {
-		if (unsubscribeRoute) unsubscribeRoute();
 		unsubscribeHovered();
 		unsubscribeSelected();
 	});
@@ -385,7 +375,7 @@
 		const insertIndex = countWaypointsBeforeSegment(segmentIndex, waypoints);
 
 		// Create waypoint at correct position in the array
-		const waypointId = routingStore.addUserWaypointAtIndex(id, snappedPos, insertIndex, getPortInfo);
+		const waypointId = routingStore.addUserWaypointAtIndex(id, snappedPos, insertIndex);
 		if (waypointId) {
 			// Set up drag using the same module-level mechanism as waypoint drag
 			const onMove = (e: PointerEvent) => {
@@ -405,7 +395,7 @@
 				}
 				activeDrag.lastSnappedPos = snap;
 
-				routingStore.moveWaypoint(activeDrag.edgeId, activeDrag.waypointId, snap, activeDrag.getPortInfo);
+				routingStore.moveWaypoint(activeDrag.edgeId, activeDrag.waypointId, snap);
 			};
 
 			const onUp = (e: PointerEvent) => {

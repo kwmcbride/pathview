@@ -6,7 +6,6 @@ import { describe, it } from 'vitest';
 import type { RouteResult, RoutingScene } from './types';
 import { generateScenario, buildScene, sceneNode, sceneRequest } from './testing/scenario';
 import { measureRoutes } from './testing/invariants';
-import { routeSceneLegacy } from './testing/legacyRouter';
 import { RoutingEngine, routeScene } from './engine';
 
 interface Benchmarked {
@@ -15,8 +14,6 @@ interface Benchmarked {
 }
 
 const routers: Record<string, Benchmarked> = {
-	// Pre-v2 baseline, larger sizes take minutes
-	legacy: { route: routeSceneLegacy, sizes: [1000] },
 	engine: { route: (scene) => routeScene(scene), sizes: [1000, 5000, 10000] }
 };
 

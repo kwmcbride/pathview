@@ -2,24 +2,23 @@
  * Routing module public API
  */
 
-// Route calculation
-export { calculateRoute, calculateRouteWithWaypoints, calculateSimpleRoute, getPathCells } from './routeCalculator';
+// Engine and worker client
+export { RoutingEngine, routeScene } from './engine';
+export { RoutingClient, type RoutingChanges } from './client';
 
-// Grid
-export { SparseGrid } from './gridBuilder';
+// Scene comparisons
+export { sameRequest, sameSceneNode } from './scene';
 
 // Port geometry
 export { getPortInfo } from './portGeometry';
 
-// Constants used by FlowCanvas
+// Constants used by canvas and edges
 export {
 	ROUTING_MARGIN,
 	HANDLE_OFFSET,
 	ARROW_INSET,
-	ASYNC_BATCH_SIZE,
 	WAYPOINT_MERGE_THRESHOLD,
 	WAYPOINT_COLLINEAR_THRESHOLD,
-	ROUTING_CONTEXT_PADDING,
 	EDGE_SOURCE_OFFSET,
 	EDGE_TARGET_OFFSET,
 	EDGE_CORNER_RADIUS
@@ -28,11 +27,11 @@ export {
 // Types
 export type {
 	Bounds,
-	RoutingContext,
 	RouteResult,
 	Direction,
 	PortStub,
 	PortInfo,
 	RouteRequest,
-	RoutingScene
+	RoutingScene,
+	SceneNode
 } from './types';

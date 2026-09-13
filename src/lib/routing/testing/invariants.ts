@@ -9,7 +9,7 @@ import type { Position } from '$lib/types/common';
 import type { Bounds, PortInfo, RouteResult, RoutingScene } from '../types';
 import { DIRECTION_VECTORS } from '../types';
 import { GRID_SIZE, SOURCE_CLEARANCE, TARGET_CLEARANCE } from '../constants';
-import { snapToGrid } from '../pathOptimizer';
+import { toGrid, fromGrid } from '../gridTypes';
 
 export type ViolationKind =
 	| 'missing'
@@ -37,10 +37,10 @@ export interface RouteMetrics {
 
 function stubEnd(port: PortInfo, clearance: number): Position {
 	const vec = DIRECTION_VECTORS[port.direction];
-	return snapToGrid({
-		x: port.position.x + vec.x * clearance,
-		y: port.position.y + vec.y * clearance
-	});
+	return {
+		x: fromGrid(toGrid(port.position.x + vec.x * clearance)),
+		y: fromGrid(toGrid(port.position.y + vec.y * clearance))
+	};
 }
 
 function onGrid(value: number): boolean {

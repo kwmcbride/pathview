@@ -2,7 +2,7 @@
  * Graph store - Core state (writable and derived stores)
  */
 
-import { writable, derived, get } from 'svelte/store';
+import { writable, derived, readable, get, type Readable } from 'svelte/store';
 import type { NodeInstance, Connection, SubsystemGraph, Annotation } from '$lib/nodes/types';
 import type { EventInstance } from '$lib/events/types';
 import { NODE_TYPES } from '$lib/constants/nodeTypes';
@@ -344,10 +344,23 @@ export const currentNodes = derived(
 	() => getCurrentGraph().nodes
 );
 
-/** Current context connections */
-export const currentConnections = derived(
-	[rootNodes, rootConnections, currentPath],
-	() => getCurrentGraph().connections
+/** Wrap a store so subscribers are notified only when the value identity changes */
+function distinct<T>(store: Readable<T>): Readable<T> {
+	return readable<T>(undefined as T, (set) => {
+		let hasValue = false;
+		let last: T;
+		return store.subscribe((value) => {
+			if (hasValue && value === last) return;
+			hasValue = true;
+			last = value;
+			set(value);
+		});
+	});
+}
+
+/** Current context connections; emits only when the connection list changes, not on node edits */
+export const currentConnections = distinct(
+	derived([rootNodes, rootConnections, currentPath], () => getCurrentGraph().connections)
 );
 
 /** Current context annotations */

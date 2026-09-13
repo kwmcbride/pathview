@@ -67,16 +67,6 @@ export interface RoutingScene {
 	requests: RouteRequest[];
 }
 
-/** Routing context passed to calculator */
-export interface RoutingContext {
-	/** Node ID -> bounding box (world coordinates, already includes margin) */
-	nodeBounds: Map<string, Bounds>;
-	/** Canvas bounds for grid calculation */
-	canvasBounds: Bounds;
-	/** Port stubs to mark as obstacles */
-	portStubs?: PortStub[];
-}
-
 /** Result from route calculation */
 export interface RouteResult {
 	/** Grid-aligned points including source/target */

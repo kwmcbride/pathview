@@ -44,3 +44,6 @@ pathview/static/
 
 # Generated screenshots
 static/examples/screenshots/
+
+# Generated large models for routing checks
+static/bench/

@@ -11,6 +11,7 @@ import type { Bounds, PortInfo, PortStub, RouteRequest, RouteResult, RoutingScen
 import { ObstacleMap } from './obstacleMap';
 import { Occupancy, collectCells } from './occupancy';
 import { searchGridPath } from './search';
+import { sameRequest, sameWaypoints } from './scene';
 import {
 	DIRECTION_INDEX,
 	DX,
@@ -127,27 +128,6 @@ function samePoints(a: GridPoint[], b: GridPoint[]): boolean {
 		if (a[i].gx !== b[i].gx || a[i].gy !== b[i].gy) return false;
 	}
 	return true;
-}
-
-function samePort(a: PortInfo, b: PortInfo): boolean {
-	return a.direction === b.direction && a.position.x === b.position.x && a.position.y === b.position.y;
-}
-
-function sameWaypoints(a: RouteRequest['waypoints'], b: RouteRequest['waypoints']): boolean {
-	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		if (a[i].position.x !== b[i].position.x || a[i].position.y !== b[i].position.y) return false;
-	}
-	return true;
-}
-
-function sameRequest(a: RouteRequest, b: RouteRequest): boolean {
-	return (
-		a.netId === b.netId &&
-		samePort(a.source, b.source) &&
-		samePort(a.target, b.target) &&
-		sameWaypoints(a.waypoints, b.waypoints)
-	);
 }
 
 function sameResult(a: RouteResult, b: RouteResult): boolean {
