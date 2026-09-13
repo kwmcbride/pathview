@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type { Position } from '$lib/types/common';
-import type { RouteResult } from './types';
+import type { RouteResult, RoutingScene } from './types';
 import { generateScenario, buildScene, sceneNode, sceneRequest, type ScenarioOptions } from './testing/scenario';
 import { checkRoutes, measureRoutes } from './testing/invariants';
 import { RoutingEngine, routeScene } from './engine';
+import { getPortInfo } from './portGeometry';
 import { GRID_SIZE } from './constants';
 
 describe('scenario generator', () => {
@@ -141,6 +142,31 @@ describe('routing engine', () => {
 		place(blocker.id);
 		engine.update();
 		expect(checkRoutes(buildScene(scenario), engine.getRoutes())).toEqual([]);
+	});
+
+	it('routes through a waypoint beside the straight line without a detour', () => {
+		const source = getPortInfo({ x: 0, y: 0 }, 80, 40, 0, 0, 1, true);
+		const target = getPortInfo({ x: 400, y: 0 }, 80, 40, 0, 0, 1, false);
+		const waypoint = { id: 'w', position: { x: 200, y: 20 }, isUserWaypoint: true };
+		const scene: RoutingScene = {
+			nodes: new Map([
+				['a', { bounds: { x: -40, y: -20, width: 80, height: 40 }, ports: [source] }],
+				['b', { bounds: { x: 360, y: -20, width: 80, height: 40 }, ports: [target] }]
+			]),
+			requests: [{ id: 'c', netId: 'a:0', source, target, waypoints: [waypoint] }]
+		};
+
+		const routes = routeScene(scene);
+		const path = routes.get('c')!.path;
+		expect(checkRoutes(scene, routes)).toEqual([]);
+		expect(passesThrough(routes.get('c')!, waypoint.position)).toBe(true);
+
+		// Straight run plus going 20px aside and back; a loop around the waypoint would be longer
+		let length = 0;
+		for (let i = 0; i < path.length - 1; i++) {
+			length += Math.abs(path[i + 1].x - path[i].x) + Math.abs(path[i + 1].y - path[i].y);
+		}
+		expect(length).toBe(path[path.length - 1].x - path[0].x + 2 * 20);
 	});
 
 	it('reports only changes', () => {

@@ -1,7 +1,7 @@
 /**
  * Orthogonal A* on the obstacle grid
  *
- * Turn penalty, no reversals, fixed start direction and optional arrival
+ * Turn penalty, no reversals, weighted start directions and optional arrival
  * direction. States (cell, direction) are packed into integers inside a
  * bounded search window and all bookkeeping uses reused typed arrays, so a
  * search allocates nothing but its result.
@@ -25,6 +25,9 @@ const MAX_STATES = 4_000_000;
 /** Upper bound for expanded states of one search window (caps time for unreachable ends) */
 const MAX_EXPANSIONS = 250_000;
 
+/** Cost above the cheapest arrival up to which arrivals from other directions are still collected */
+const ARRIVAL_SLACK = 2 * TURN_COST + 2;
+
 /** Counters for benchmarks and profiling */
 export const searchStats = { searches: 0, expanded: 0 };
 
@@ -33,13 +36,20 @@ export interface CongestionCosts {
 	penalty(gx: number, gy: number, axis: 0 | 1): number;
 }
 
+/** A start direction with the cost already spent to get there */
+export interface SearchStart {
+	dir: number;
+	cost: number;
+}
+
 export interface GridSearch {
 	/** Optional congestion costs added per step */
 	congestion?: CongestionCosts;
 	/** Heuristic weight; above 1 trades bounded path cost for fewer expanded states (default 1) */
 	heuristicWeight?: number;
 	start: GridPoint;
-	startDir: number;
+	/** Start directions; the first step follows the start direction */
+	starts: SearchStart[];
 	end: GridPoint;
 	/** Required arrival direction (turn penalty otherwise), or -1 for any */
 	endDir: number;
@@ -50,7 +60,10 @@ export interface GridSearch {
 export interface GridPath {
 	/** Corner cells from start to end, both included */
 	corners: GridPoint[];
+	startDir: number;
 	arrivalDir: number;
+	/** Total cost including the start cost */
+	cost: number;
 }
 
 // Reused buffers, grown on demand
@@ -122,6 +135,13 @@ function minTurns(dx: number, dy: number, d: number): number {
 	return ahead >= 0 ? 1 : 2;
 }
 
+/** Admissible remaining cost estimate */
+function heuristic(gx: number, gy: number, d: number, end: GridPoint): number {
+	const dx = end.gx - gx;
+	const dy = end.gy - gy;
+	return Math.abs(dx) + Math.abs(dy) + TURN_COST * minTurns(dx, dy, d);
+}
+
 function windowAround(request: GridSearch, padding: number): GridRect {
 	const { start, end } = request;
 	return {
@@ -132,26 +152,50 @@ function windowAround(request: GridSearch, padding: number): GridRect {
 	};
 }
 
+/** Search in widening windows; arrivals are indexed by arrival direction */
+function searchWindows(map: ObstacleMap, request: GridSearch, collect: boolean): (GridPath | undefined)[] | null {
+	for (const padding of WINDOW_PADDINGS) {
+		const found = searchWindow(map, request, windowAround(request, padding), collect);
+		if (found) return found;
+	}
+	const near = windowAround(request, WINDOW_PADDINGS[0]);
+	const e = map.extent;
+	return searchWindow(
+		map,
+		request,
+		{
+			minGx: Math.min(near.minGx, e.minGx - WINDOW_PADDINGS[0]),
+			minGy: Math.min(near.minGy, e.minGy - WINDOW_PADDINGS[0]),
+			maxGx: Math.max(near.maxGx, e.maxGx + WINDOW_PADDINGS[0]),
+			maxGy: Math.max(near.maxGy, e.maxGy + WINDOW_PADDINGS[0])
+		},
+		collect
+	);
+}
+
 /**
  * Find the cheapest orthogonal path, widening the search window when needed.
  * Returns null if the end is unreachable.
  */
 export function searchGridPath(map: ObstacleMap, request: GridSearch): GridPath | null {
-	for (const padding of WINDOW_PADDINGS) {
-		const path = searchWindow(map, request, windowAround(request, padding));
-		if (path) return path;
-	}
-	const near = windowAround(request, WINDOW_PADDINGS[0]);
-	const e = map.extent;
-	return searchWindow(map, request, {
-		minGx: Math.min(near.minGx, e.minGx - WINDOW_PADDINGS[0]),
-		minGy: Math.min(near.minGy, e.minGy - WINDOW_PADDINGS[0]),
-		maxGx: Math.max(near.maxGx, e.maxGx + WINDOW_PADDINGS[0]),
-		maxGy: Math.max(near.maxGy, e.maxGy + WINDOW_PADDINGS[0])
-	});
+	return searchWindows(map, request, false)?.find((path) => path !== undefined) ?? null;
 }
 
-function searchWindow(map: ObstacleMap, request: GridSearch, win: GridRect): GridPath | null {
+/**
+ * Find the cheapest path to the end for each arrival direction that is not far
+ * more expensive than the cheapest one. Used for waypoints, where the best way
+ * to arrive depends on how the route continues.
+ */
+export function searchGridArrivals(map: ObstacleMap, request: GridSearch): (GridPath | undefined)[] {
+	return searchWindows(map, request, true) ?? [];
+}
+
+function searchWindow(
+	map: ObstacleMap,
+	request: GridSearch,
+	win: GridRect,
+	collect: boolean
+): (GridPath | undefined)[] | null {
 	const w = win.maxGx - win.minGx + 1;
 	const h = win.maxGy - win.minGy + 1;
 	const states = w * h * 4;
@@ -180,26 +224,45 @@ function searchWindow(map: ObstacleMap, request: GridSearch, win: GridRect): Gri
 		return false;
 	};
 
-	const startState = ((start.gy - y0) * w + (start.gx - x0)) * 4 + request.startDir;
-	gScore[startState] = 0;
-	parent[startState] = -1;
-	stamp[startState] = seen;
-	const h0 = Math.abs(end.gx - start.gx) + Math.abs(end.gy - start.gy);
-	heapPush(startState, weight * h0 * 65536 + h0);
+	const startCell = (start.gy - y0) * w + (start.gx - x0);
+	for (const s of request.starts) {
+		const state = startCell * 4 + s.dir;
+		if (stamp[state] === seen && gScore[state] <= s.cost) continue;
+		gScore[state] = s.cost;
+		parent[state] = -1;
+		stamp[state] = seen;
+		const hh = heuristic(start.gx, start.gy, s.dir, end);
+		heapPush(state, (s.cost + weight * hh) * 65536 + hh);
+	}
 
+	const arrivals: (GridPath | undefined)[] = [];
+	let arrivalCount = 0;
+	let bestArrival = Infinity;
 	let expanded = 0;
+
 	while (heapSize > 0) {
+		if (arrivalCount > 0 && heapKey[0] / 65536 > bestArrival + ARRIVAL_SLACK) break;
 		const s = heapPop();
 		if (stamp[s] === closed) continue;
 		stamp[s] = closed;
 		searchStats.expanded++;
-		if (++expanded > MAX_EXPANSIONS) return null;
+		if (++expanded > MAX_EXPANSIONS) break;
 
 		const d = s & 3;
 		const cell = s >> 2;
 		const gx = (cell % w) + x0;
 		const gy = ((cell / w) | 0) + y0;
-		if (gx === end.gx && gy === end.gy) return reconstruct(s, w, x0, y0);
+
+		if (gx === end.gx && gy === end.gy) {
+			const path = reconstruct(s, w, x0, y0);
+			if (!collect) return [path];
+			if (arrivals[d] === undefined) {
+				arrivals[d] = path;
+				arrivalCount++;
+				bestArrival = Math.min(bestArrival, path.cost);
+				if (arrivalCount === 4) break;
+			}
+		}
 
 		const g = gScore[s];
 		const isStart = parent[s] === -1;
@@ -229,20 +292,19 @@ function searchWindow(map: ObstacleMap, request: GridSearch, win: GridRect): Gri
 			parent[ns] = s;
 			stamp[ns] = seen;
 
-			const dx = end.gx - nx;
-			const dy = end.gy - ny;
-			const hh = Math.abs(dx) + Math.abs(dy) + TURN_COST * minTurns(dx, dy, nd);
+			const hh = heuristic(nx, ny, nd, end);
 			heapPush(ns, (cost + weight * hh) * 65536 + hh);
 		}
 	}
 
-	return null;
+	return arrivalCount > 0 ? arrivals : null;
 }
 
 function reconstruct(goal: number, w: number, x0: number, y0: number): GridPath {
 	const corners: GridPoint[] = [];
 	let s = goal;
 	let nextDir = -1;
+	let startDir = goal & 3;
 	while (s !== -1) {
 		const d = s & 3;
 		const p = parent[s];
@@ -250,9 +312,10 @@ function reconstruct(goal: number, w: number, x0: number, y0: number): GridPath 
 			const cell = s >> 2;
 			corners.push({ gx: (cell % w) + x0, gy: ((cell / w) | 0) + y0 });
 		}
+		if (p === -1) startDir = d;
 		nextDir = d;
 		s = p;
 	}
 	corners.reverse();
-	return { corners, arrivalDir: goal & 3 };
+	return { corners, startDir, arrivalDir: goal & 3, cost: gScore[goal] };
 }

@@ -10,7 +10,7 @@
 import type { Bounds, PortInfo, PortStub, RouteRequest, RouteResult, RoutingScene } from './types';
 import { ObstacleMap } from './obstacleMap';
 import { Occupancy, collectCells } from './occupancy';
-import { searchGridPath } from './search';
+import { searchGridPath, searchGridArrivals, TURN_COST, type GridPath, type SearchStart } from './search';
 import { sameRequest, sameWaypoints } from './scene';
 import {
 	DIRECTION_INDEX,
@@ -160,10 +160,48 @@ function tileKey(tx: number, ty: number): number {
 	return (tx + 0x8000) * 0x10000 + (ty + 0x8000);
 }
 
-/** Orthogonal fallback when no path exists: first along the start direction, then turn */
-function fallbackCorners(from: GridPoint, to: GridPoint, dir: number): GridPoint[] {
-	const corner = dir <= 1 ? { gx: to.gx, gy: from.gy } : { gx: from.gx, gy: to.gy };
-	return [from, corner, to];
+/** Orthogonal fallback through all stops when no path exists: first along the start direction, then turn */
+function fallbackCorners(from: GridPoint, stops: GridPoint[], dir: number): GridPoint[] {
+	const corners = [from];
+	let current = from;
+	for (const stop of stops) {
+		if (dir <= 1) corners.push({ gx: stop.gx, gy: current.gy });
+		else corners.push({ gx: current.gx, gy: stop.gy });
+		corners.push(stop);
+		current = stop;
+	}
+	return corners;
+}
+
+/** Cost of leaving a waypoint in a direction after an arrival: turning costs extra, reversing is not allowed */
+function continuationCost(arrival: GridPath, dir: number): number {
+	if (dir === OPPOSITE[arrival.arrivalDir]) return Infinity;
+	return arrival.cost + (dir === arrival.arrivalDir ? 0 : TURN_COST);
+}
+
+/** Cheapest arrival to continue from in a direction */
+function bestArrivalFor(arrivals: (GridPath | undefined)[], dir: number): GridPath | undefined {
+	let best: GridPath | undefined;
+	let bestCost = Infinity;
+	for (const arrival of arrivals) {
+		if (!arrival) continue;
+		const cost = continuationCost(arrival, dir);
+		if (cost < bestCost) {
+			best = arrival;
+			bestCost = cost;
+		}
+	}
+	return best;
+}
+
+/** Start directions for the leg after a waypoint, each with the cheapest way to get there */
+function continuations(arrivals: (GridPath | undefined)[]): SearchStart[] {
+	const starts: SearchStart[] = [];
+	for (let dir = 0; dir < 4; dir++) {
+		const arrival = bestArrivalFor(arrivals, dir);
+		if (arrival) starts.push({ dir, cost: continuationCost(arrival, dir) });
+	}
+	return starts;
 }
 
 function sortedKeys(keys: Iterable<string>): string[] {
@@ -481,50 +519,61 @@ export class RoutingEngine {
 		const targetDir = DIRECTION_INDEX[request.target.direction];
 		const exit = ray(start, startDir, PORT_EXIT_CELLS);
 		const entry = ray(end, targetDir, PORT_EXIT_CELLS);
-		const congestion = this.congestion ? this.occupancy : undefined;
+		const waypoints = request.waypoints.map((w) => ({ gx: toGrid(w.position.x), gy: toGrid(w.position.y) }));
+		const fallback = (): RawRoute => ({
+			corners: simplifyGridPath(fallbackCorners(start, [...waypoints, end], startDir)),
+			isFallback: true,
+			tiles: []
+		});
+
 		// A port covered by another node is unreachable; skip the (exhaustive) search
-		const enclosed = this.isEnclosed(exit, startDir) || this.isEnclosed(entry, targetDir);
+		if (this.isEnclosed(exit, startDir) || this.isEnclosed(entry, targetDir)) return fallback();
 
-		const stops = request.waypoints.map((w) => ({ gx: toGrid(w.position.x), gy: toGrid(w.position.y) }));
-		stops.push(end);
+		const options = {
+			congestion: this.congestion ? this.occupancy : undefined,
+			heuristicWeight: this.heuristicWeight
+		};
 
-		const corners: GridPoint[] = [];
-		let isFallback = false;
+		// Legs to waypoints keep the cheapest arrival per direction, so the route is
+		// optimal as a whole instead of leg by leg (no loops around waypoints)
+		const legs: (GridPath | undefined)[][] = [];
 		let from = start;
-		let dir = startDir;
-
-		for (let k = 0; k < stops.length; k++) {
-			const to = stops[k];
-			const last = k === stops.length - 1;
-			const forced = k === 0 ? [...exit, to] : [from, to];
-			if (last) forced.push(...entry);
-
-			const path = enclosed
-				? null
-				: searchGridPath(this.map, {
-				congestion,
-				heuristicWeight: this.heuristicWeight,
+		let starts: SearchStart[] = [{ dir: startDir, cost: 0 }];
+		for (let k = 0; k < waypoints.length; k++) {
+			const arrivals = searchGridArrivals(this.map, {
+				...options,
 				start: from,
-				startDir: dir,
-				end: to,
-				endDir: last ? OPPOSITE[targetDir] : -1,
-				forced
+				starts,
+				end: waypoints[k],
+				endDir: -1,
+				forced: k === 0 ? [...exit, waypoints[k]] : [from, waypoints[k]]
 			});
-
-			let leg: GridPoint[];
-			if (path) {
-				leg = path.corners;
-				dir = path.arrivalDir;
-			} else {
-				isFallback = true;
-				leg = fallbackCorners(from, to, dir);
-			}
-			const skipFirst = corners.length > 0 ? 1 : 0;
-			for (let i = skipFirst; i < leg.length; i++) corners.push(leg[i]);
-			from = to;
+			if (!arrivals.some((a) => a !== undefined)) return fallback();
+			legs.push(arrivals);
+			starts = continuations(arrivals);
+			from = waypoints[k];
 		}
 
-		return { corners: simplifyGridPath(corners), isFallback, tiles: [] };
+		const last = searchGridPath(this.map, {
+			...options,
+			start: from,
+			starts,
+			end,
+			endDir: OPPOSITE[targetDir],
+			forced: [...(waypoints.length === 0 ? exit : [from]), ...entry]
+		});
+		if (!last) return fallback();
+
+		// Walk back through the legs, taking the arrival each continuation started from
+		let corners = last.corners;
+		let dir = last.startDir;
+		for (let k = legs.length - 1; k >= 0; k--) {
+			const arrival = bestArrivalFor(legs[k], dir)!;
+			corners = [...arrival.corners, ...corners.slice(1)];
+			dir = arrival.startDir;
+		}
+
+		return { corners: simplifyGridPath(corners), isFallback: false, tiles: [] };
 	}
 }
 
