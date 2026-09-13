@@ -55,10 +55,15 @@ export interface RouteRequest {
 	waypoints: Waypoint[];
 }
 
-/** Complete routing input: obstacles and connections */
+/** Routing input for one node: obstacle bounds and all its ports */
+export interface SceneNode {
+	bounds: Bounds;
+	ports: PortStub[];
+}
+
+/** Complete routing input: nodes and connections */
 export interface RoutingScene {
-	nodeBounds: Map<string, Bounds>;
-	portStubs: PortStub[];
+	nodes: Map<string, SceneNode>;
 	requests: RouteRequest[];
 }
 

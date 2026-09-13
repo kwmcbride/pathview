@@ -6,7 +6,7 @@
  */
 
 import type { Position, RotationValue } from '$lib/types/common';
-import type { Bounds, PortStub, RouteRequest, RoutingScene } from '../types';
+import type { PortInfo, PortStub, RouteRequest, RoutingScene, SceneNode } from '../types';
 import { calculateNodeDimensions, snapTo2G } from '$lib/constants/dimensions';
 import { G } from '$lib/constants/grid';
 import { getPortInfo } from '../portGeometry';
@@ -147,43 +147,52 @@ export function generateScenario(options: ScenarioOptions): Scenario {
 	return { nodes, connections };
 }
 
-/**
- * Build the routing input for a scenario
- */
-export function buildScene(scenario: Scenario): RoutingScene {
-	const nodeBounds = new Map<string, Bounds>();
-	const portStubs: PortStub[] = [];
-	const nodesById = new Map(scenario.nodes.map((n) => [n.id, n]));
+function portOf(node: ScenarioNode, index: number, isOutput: boolean): PortInfo {
+	return getPortInfo(
+		node.center,
+		node.width,
+		node.height,
+		node.rotation,
+		index,
+		isOutput ? node.outputs : node.inputs,
+		isOutput
+	);
+}
 
-	const portOf = (node: ScenarioNode, index: number, isOutput: boolean) =>
-		getPortInfo(
-			node.center,
-			node.width,
-			node.height,
-			node.rotation,
-			index,
-			isOutput ? node.outputs : node.inputs,
-			isOutput
-		);
-
-	for (const node of scenario.nodes) {
-		nodeBounds.set(node.id, {
+/** Routing input for one node */
+export function sceneNode(node: ScenarioNode): SceneNode {
+	const ports: PortStub[] = [];
+	for (let i = 0; i < node.inputs; i++) ports.push(portOf(node, i, false));
+	for (let i = 0; i < node.outputs; i++) ports.push(portOf(node, i, true));
+	return {
+		bounds: {
 			x: node.center.x - node.width / 2,
 			y: node.center.y - node.height / 2,
 			width: node.width,
 			height: node.height
-		});
-		for (let i = 0; i < node.inputs; i++) portStubs.push(portOf(node, i, false));
-		for (let i = 0; i < node.outputs; i++) portStubs.push(portOf(node, i, true));
-	}
+		},
+		ports
+	};
+}
 
-	const requests: RouteRequest[] = scenario.connections.map((c) => ({
-		id: c.id,
-		netId: `${c.sourceNodeId}:${c.sourcePortIndex}`,
-		source: portOf(nodesById.get(c.sourceNodeId)!, c.sourcePortIndex, true),
-		target: portOf(nodesById.get(c.targetNodeId)!, c.targetPortIndex, false),
+/** Routing input for one connection */
+export function sceneRequest(connection: ScenarioConnection, nodesById: Map<string, ScenarioNode>): RouteRequest {
+	return {
+		id: connection.id,
+		netId: `${connection.sourceNodeId}:${connection.sourcePortIndex}`,
+		source: portOf(nodesById.get(connection.sourceNodeId)!, connection.sourcePortIndex, true),
+		target: portOf(nodesById.get(connection.targetNodeId)!, connection.targetPortIndex, false),
 		waypoints: []
-	}));
+	};
+}
 
-	return { nodeBounds, portStubs, requests };
+/**
+ * Build the routing input for a scenario
+ */
+export function buildScene(scenario: Scenario): RoutingScene {
+	const nodesById = new Map(scenario.nodes.map((n) => [n.id, n]));
+	return {
+		nodes: new Map(scenario.nodes.map((n) => [n.id, sceneNode(n)])),
+		requests: scenario.connections.map((c) => sceneRequest(c, nodesById))
+	};
 }

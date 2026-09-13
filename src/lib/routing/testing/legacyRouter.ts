@@ -27,10 +27,11 @@ function canvasBoundsOf(nodeBounds: Map<string, Bounds>): Bounds {
 }
 
 export function routeSceneLegacy(scene: RoutingScene): Map<string, RouteResult> {
+	const nodeBounds = new Map([...scene.nodes].map(([id, node]) => [id, node.bounds]));
 	const grid = new SparseGrid({
-		nodeBounds: scene.nodeBounds,
-		canvasBounds: canvasBoundsOf(scene.nodeBounds),
-		portStubs: scene.portStubs
+		nodeBounds,
+		canvasBounds: canvasBoundsOf(nodeBounds),
+		portStubs: [...scene.nodes.values()].flatMap((node) => node.ports)
 	});
 
 	const route = (r: RouteRequest, usedCells?: Map<string, Set<Direction>>): RouteResult =>

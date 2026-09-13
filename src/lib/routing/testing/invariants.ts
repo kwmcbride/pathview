@@ -99,8 +99,8 @@ export function checkRoutes(scene: RoutingScene, routes: Map<string, RouteResult
 			if (a.x !== b.x && a.y !== b.y) {
 				violations.push({ connectionId: id, kind: 'not-orthogonal', detail: `segment ${i}` });
 			}
-			for (const [nodeId, bounds] of scene.nodeBounds) {
-				if (segmentCrossesBounds(a, b, bounds)) {
+			for (const [nodeId, node] of scene.nodes) {
+				if (segmentCrossesBounds(a, b, node.bounds)) {
 					violations.push({ connectionId: id, kind: 'crosses-node', detail: `${nodeId} segment ${i}` });
 				}
 			}
