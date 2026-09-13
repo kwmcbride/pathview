@@ -36,6 +36,16 @@ export const HANDLE = {
 	hollowInset: 1.5
 } as const;
 
+/** Connection label capsule, shared by the drawn label and its inline editor */
+export const EDGE_LABEL = {
+	/** Capsule height in pixels */
+	height: 14,
+	/** Space between text and capsule ends in pixels */
+	paddingX: 6,
+	/** Minimum editor width in characters */
+	minChars: 5
+} as const;
+
 /** Event node dimensions (grid-aligned) */
 export const EVENT = {
 	/** Total bounding box size: 8 grid units = 80px */

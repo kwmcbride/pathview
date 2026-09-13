@@ -192,6 +192,7 @@ A connection is a directed wire from a source output port to a target input port
 | `targetNodeId` | string | yes | ID of the target node. |
 | `targetPortIndex` | number | yes | Index into the target node's `inputs` array. |
 | `waypoints` | array | no | Route control points. UI-only, no simulation semantics. |
+| `label` | string | no | Text shown on the wire, e.g. a signal name. UI-only, no simulation semantics. |
 
 **Fan-out:** A single output port can connect to multiple input ports (multiple connections share the same `sourceNodeId`/`sourcePortIndex`).
 

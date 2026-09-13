@@ -9,6 +9,7 @@ import type { ContextMenuTarget } from '$lib/stores/contextMenu';
 import { graphStore, ANNOTATION_FONT_SIZE } from '$lib/stores/graph';
 import { historyStore } from '$lib/stores/history';
 import { routingStore } from '$lib/stores/routing';
+import { editEdgeLabel } from '$lib/stores/edgeLabelEdit.svelte';
 import { eventStore } from '$lib/stores/events';
 import { clipboardStore } from '$lib/stores/clipboard';
 import { codePreviewStore } from '$lib/stores/codePreview';
@@ -400,6 +401,11 @@ function buildEventMenu(eventId: string): MenuItemType[] {
  */
 function buildEdgeMenu(edgeId: string): MenuItemType[] {
 	return [
+		{
+			label: 'Edit Label',
+			icon: 'tag',
+			action: () => editEdgeLabel(edgeId)
+		},
 		{
 			label: 'Reset Route',
 			icon: 'rotate',

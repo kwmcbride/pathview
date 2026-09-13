@@ -107,3 +107,19 @@ export function updateConnectionWaypoints(id: string, waypoints: Waypoint[]): vo
 		connections.map((c) => (c.id === id ? { ...c, waypoints } : c))
 	);
 }
+
+/**
+ * Set the label of a connection; empty text removes it
+ */
+export function updateConnectionLabel(id: string, label: string): void {
+	const text = label.trim();
+	updateCurrentConnections((connections) =>
+		connections.map((c) => {
+			if (c.id !== id) return c;
+			const next = { ...c };
+			if (text) next.label = text;
+			else delete next.label;
+			return next;
+		})
+	);
+}
