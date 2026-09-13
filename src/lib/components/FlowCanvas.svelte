@@ -38,6 +38,8 @@
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { GRID_SIZE, SNAP_GRID, BACKGROUND_GAP } from '$lib/constants/grid';
 	import { createRoutingSync } from './canvas/routingSync';
+	import { createEdgeHighlighter } from '$lib/stores/edgeHighlight';
+	import { CANVAS_MIN_ZOOM } from '$lib/constants/layout';
 	import { shallowEqualArray, shallowEqualRecord } from '$lib/utils/shallowEqual';
 	import type { NodeInstance, Connection, Annotation } from '$lib/nodes/types';
 	import type { EventInstance } from '$lib/events/types';
@@ -298,14 +300,15 @@
 
 	// SvelteFlow state - this is the source of truth for visual state
 	// Block nodes from graphStore
-	let blockNodes = $state<Node[]>([]);
+	// Raw state (no deep proxies): arrays and objects are replaced, never mutated
+	let blockNodes = $state.raw<Node[]>([]);
 	// Event nodes from eventStore
-	let eventNodes = $state<Node[]>([]);
+	let eventNodes = $state.raw<Node[]>([]);
 	// Annotation nodes from graphStore
-	let annotationNodes = $state<Node[]>([]);
+	let annotationNodes = $state.raw<Node[]>([]);
 	// Combined nodes for SvelteFlow
-	let nodes = $state<Node[]>([]);
-	let edges = $state<Edge[]>([]);
+	let nodes = $state.raw<Node[]>([]);
+	let edges = $state.raw<Edge[]>([]);
 	// O(1) node lookup map — kept in sync with nodes array via $effect
 	let nodeMap = $derived(new Map(nodes.map(n => [n.id, n])));
 
@@ -595,6 +598,10 @@
 		return ids;
 	}
 
+	// Edge highlights for the hovered handle and selected node, computed centrally
+	const edgeHighlighter = createEdgeHighlighter(() => edges);
+	cleanups.push(edgeHighlighter.destroy);
+
 	function rebuildEdges(connections: Connection[]): void {
 		const visibleIds = getVisibleNodeIds();
 		const currentEdgeSelection = new Map(edges.map((e) => [e.id, e.selected]));
@@ -605,6 +612,7 @@
 				if (currentEdgeSelection.get(conn.id)) edge.selected = true;
 				return edge;
 			});
+		edgeHighlighter.refresh();
 	}
 
 	// Subscribe to current connections (filtered by current navigation context)
@@ -760,6 +768,7 @@
 		// Force sync edges from store after deletion
 		const afterConnections = get(graphStore.connections);
 		edges = afterConnections.map(toFlowEdge);
+		edgeHighlighter.refresh();
 
 		isSyncing = false;
 	}
@@ -970,6 +979,7 @@
 		onedgecontextmenu={readonly ? undefined : handleEdgeContextMenu}
 		onpanecontextmenu={readonly ? undefined : handlePaneContextMenu}
 		nodeOrigin={[0.5, 0.5]}
+		minZoom={CANVAS_MIN_ZOOM}
 		{...{ snapToGrid: true, snapGrid: SNAP_GRID } as any}
 		deleteKeyCode={readonly ? null : ['Delete', 'Backspace']}
 		selectionKeyCode={readonly ? null : ['Shift']}
