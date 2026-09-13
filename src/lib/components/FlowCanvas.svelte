@@ -24,8 +24,9 @@
 	import { eventStore, setEventSelection } from '$lib/stores/events';
 	import { selectedNodeIds as graphSelectedNodeIds } from '$lib/stores/graph/state';
 	import { historyStore } from '$lib/stores/history';
-	import { routingStore, buildRoutingContext, type PortInfo } from '$lib/stores/routing';
-	import { HANDLE_OFFSET, ARROW_INSET, type Direction, type PortStub } from '$lib/routing';
+	import { routingStore } from '$lib/stores/routing';
+	import type { Bounds } from '$lib/routing';
+	import type { Position } from '$lib/types/common';
 	import { themeStore, type Theme } from '$lib/stores/theme';
 	import { clearSelectionTrigger, nudgeTrigger, selectNodeTrigger, registerHasSelection, triggerFitView } from '$lib/stores/viewActions';
 	import { screenToFlow } from '$lib/utils/viewUtils';
@@ -36,7 +37,9 @@
 		import { nodeRegistry } from '$lib/nodes';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { GRID_SIZE, SNAP_GRID, BACKGROUND_GAP } from '$lib/constants/grid';
-	import { DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from '$lib/constants/dimensions';
+	import { createRoutingSync } from './canvas/routingSync';
+	import { createEdgeHighlighter } from '$lib/stores/edgeHighlight';
+	import { CANVAS_MIN_ZOOM } from '$lib/constants/layout';
 	import { shallowEqualArray, shallowEqualRecord } from '$lib/utils/shallowEqual';
 	import type { NodeInstance, Connection, Annotation } from '$lib/nodes/types';
 	import type { EventInstance } from '$lib/events/types';
@@ -72,7 +75,7 @@
 		if (routingContextTimer !== null) clearTimeout(routingContextTimer);
 		routingContextTimer = setTimeout(() => {
 			routingContextTimer = null;
-			updateRoutingContext();
+			routingSync.syncAll();
 		}, 0);
 	}
 
@@ -111,8 +114,7 @@
 				const gridSize = 10;
 				const snappedX = Math.round(flowPos.x / gridSize) * gridSize;
 				const snappedY = Math.round(flowPos.y / gridSize) * gridSize;
-				// Pass getPortInfo for immediate single-route recalculation (no full recalc needed)
-				routingStore.addUserWaypoint(selectedEdge.id, { x: snappedX, y: snappedY }, getPortInfo);
+				routingStore.addUserWaypoint(selectedEdge.id, { x: snappedX, y: snappedY });
 			}
 			return;
 		}
@@ -135,11 +137,8 @@
 
 		if (updatedNodes.length > 0) {
 			pendingNodeUpdates = [...updatedNodes];
-			// Recalculate routes for rotated/flipped nodes after FlowUpdater processes
-			setTimeout(() => {
-				const connections = get(graphStore.connections);
-				routingStore.recalculateRoutesForNodes(new Set(updatedNodes), connections, getPortInfo);
-			}, 0);
+			// Report rotated/flipped nodes to routing after FlowUpdater processes
+			setTimeout(() => routingSync.syncNodes(updatedNodes), 0);
 		}
 	}
 
@@ -270,120 +269,21 @@
 		pendingNodeUpdates = [];
 	}
 
-	// Helper to get port position and direction in world coordinates
-	// Returns handle tip position (accounting for handle offset from block edge)
-	// For inputs, also accounts for arrowhead so stub starts within arrow
-	function getPortInfo(nodeId: string, portIndex: number, isOutput: boolean): PortInfo | null {
-		const node = nodeMap.get(nodeId);
-		if (!node) return null;
+	// Routing: the scene is diffed here and routed by the routing engine in a worker
+	const routingSync = createRoutingSync({
+		blockNodes: () => nodes.filter((n) => n.type === 'pathview'),
+		node: (id) => nodeMap.get(id),
+		connections: () => get(graphStore.connections),
+		visibleBounds
+	});
 
-		const nodeData = node.data as NodeInstance;
-		const ports = isOutput ? nodeData.outputs : nodeData.inputs;
-		if (portIndex >= ports.length) return null;
-
-		const rotation = (nodeData.params?.['_rotation'] as number) || 0;
-		const width = node.measured?.width ?? node.width ?? DEFAULT_NODE_WIDTH;
-		const height = node.measured?.height ?? node.height ?? DEFAULT_NODE_HEIGHT;
-
-		// Calculate port offset from center based on rotation
-		const portCount = ports.length;
-		const portSpacing = 20; // G.x2
-		const span = (portCount - 1) * portSpacing;
-		const offsetFromCenter = -span / 2 + portIndex * portSpacing;
-
-		let x = node.position.x;
-		let y = node.position.y;
-		let direction: Direction;
-
-		// Additional offset: handle tip is HANDLE_OFFSET outside block edge
-		// For inputs (targets), add ARROW_INSET so stub starts within arrowhead
-		const extraOffset = isOutput ? HANDLE_OFFSET : (HANDLE_OFFSET + ARROW_INSET);
-
-		// Position and direction based on rotation (output = right side for rotation 0)
-		if (isOutput) {
-			switch (rotation) {
-				case 1: // outputs at bottom
-					x += offsetFromCenter;
-					y += height / 2 + extraOffset;
-					direction = 'down';
-					break;
-				case 2: // outputs at left
-					x -= width / 2 + extraOffset;
-					y += offsetFromCenter;
-					direction = 'left';
-					break;
-				case 3: // outputs at top
-					x += offsetFromCenter;
-					y -= height / 2 + extraOffset;
-					direction = 'up';
-					break;
-				default: // rotation 0 - outputs at right
-					x += width / 2 + extraOffset;
-					y += offsetFromCenter;
-					direction = 'right';
-					break;
-			}
-		} else {
-			// Inputs are opposite to outputs
-			switch (rotation) {
-				case 1: // inputs at top
-					x += offsetFromCenter;
-					y -= height / 2 + extraOffset;
-					direction = 'up';
-					break;
-				case 2: // inputs at right
-					x += width / 2 + extraOffset;
-					y += offsetFromCenter;
-					direction = 'right';
-					break;
-				case 3: // inputs at bottom
-					x += offsetFromCenter;
-					y += height / 2 + extraOffset;
-					direction = 'down';
-					break;
-				default: // rotation 0 - inputs at left
-					x -= width / 2 + extraOffset;
-					y += offsetFromCenter;
-					direction = 'left';
-					break;
-			}
-		}
-
-		return { position: { x, y }, direction };
-	}
-
-	// Update routing context and recalculate all routes
-	function updateRoutingContext() {
-		// Only include block nodes (not events or annotations) for routing
-		const blockNodesForRouting = nodes.filter(n => n.type === 'pathview');
-		if (blockNodesForRouting.length === 0) {
-			routingStore.clearRoutes();
-			return;
-		}
-
-		const { nodeBounds, canvasBounds } = buildRoutingContext(blockNodesForRouting);
-
-		// Collect all port stubs for obstacle marking
-		const portStubs: PortStub[] = [];
-		for (const node of blockNodesForRouting) {
-			const nodeData = node.data as NodeInstance;
-			// Collect input port stubs
-			for (let i = 0; i < nodeData.inputs.length; i++) {
-				const info = getPortInfo(node.id, i, false);
-				if (info) portStubs.push({ position: info.position, direction: info.direction });
-			}
-			// Collect output port stubs
-			for (let i = 0; i < nodeData.outputs.length; i++) {
-				const info = getPortInfo(node.id, i, true);
-				if (info) portStubs.push({ position: info.position, direction: info.direction });
-			}
-		}
-
-		routingStore.setContext(nodeBounds, canvasBounds, portStubs);
-
-		// Recalculate all routes
-		const connections = get(graphStore.connections);
-		routingStore.recalculateAllRoutes(connections, getPortInfo);
+	// Visible canvas area in flow coordinates
+	function visibleBounds(): Bounds | null {
+		if (!canvasEl) return null;
+		const rect = canvasEl.getBoundingClientRect();
+		const topLeft = screenToFlow({ x: rect.left, y: rect.top });
+		const bottomRight = screenToFlow({ x: rect.right, y: rect.bottom });
+		return { x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y };
 	}
 
 	// Custom node types - will add more for different shapes
@@ -400,14 +300,15 @@
 
 	// SvelteFlow state - this is the source of truth for visual state
 	// Block nodes from graphStore
-	let blockNodes = $state<Node[]>([]);
+	// Raw state (no deep proxies): arrays and objects are replaced, never mutated
+	let blockNodes = $state.raw<Node[]>([]);
 	// Event nodes from eventStore
-	let eventNodes = $state<Node[]>([]);
+	let eventNodes = $state.raw<Node[]>([]);
 	// Annotation nodes from graphStore
-	let annotationNodes = $state<Node[]>([]);
+	let annotationNodes = $state.raw<Node[]>([]);
 	// Combined nodes for SvelteFlow
-	let nodes = $state<Node[]>([]);
-	let edges = $state<Edge[]>([]);
+	let nodes = $state.raw<Node[]>([]);
+	let edges = $state.raw<Edge[]>([]);
 	// O(1) node lookup map — kept in sync with nodes array via $effect
 	let nodeMap = $derived(new Map(nodes.map(n => [n.id, n])));
 
@@ -427,10 +328,8 @@
 		});
 	});
 
-	// Reroute connections when a block's measured size changes (icon-mode toggle,
-	// pinned-params, name-length, port-label visibility, …). The initial
-	// measurement after mount is recorded silently — only later changes trigger
-	// a recalculation.
+	// Report measured block sizes to routing: the first measurement after mount and
+	// later changes (icon-mode toggle, pinned params, name length, port labels)
 	const lastMeasuredDims = new Map<string, { w: number; h: number }>();
 	$effect(() => {
 		const changed = new Set<string>();
@@ -441,31 +340,19 @@
 			if (w === undefined || h === undefined) continue;
 			const last = lastMeasuredDims.get(node.id);
 			if (!last || last.w !== w || last.h !== h) {
-				if (last) changed.add(node.id);
+				changed.add(node.id);
 				lastMeasuredDims.set(node.id, { w, h });
-				routingStore.updateNodeBounds(node.id, {
-					x: node.position.x - w / 2,
-					y: node.position.y - h / 2,
-					width: w,
-					height: h
-				});
 			}
 		}
-		if (changed.size > 0) {
-			const connections = get(graphStore.connections);
-			routingStore.recalculateRoutesForNodes(changed, connections, getPortInfo);
-		}
+		if (changed.size > 0) untrack(() => routingSync.syncNodes(changed));
 	});
 
-	// On model load, the initial routing pass runs with fallback 80×40
-	// dimensions because nodes haven't been measured yet, and the per-node
-	// $effect above silently records first measurements without rerouting.
-	// Trigger a full reroute once measurements have settled.
+	// On model load, resync once the assembly animation has settled all measurements
 	let lastAssemblyTrigger = 0;
 	const unsubAssembly = assemblyAnimationTrigger.subscribe((v) => {
 		if (v > lastAssemblyTrigger) {
 			lastAssemblyTrigger = v;
-			setTimeout(() => updateRoutingContext(), 400);
+			setTimeout(() => routingSync.syncAll(), 400);
 		}
 	});
 	onDestroy(() => unsubAssembly());
@@ -644,15 +531,14 @@
 		}
 
 		blockNodes = updatedNodes;
+		// Routing obstacles follow added and removed blocks
+		scheduleRoutingUpdate();
 
 		// Queue node internal updates for nodes with changed ports/rotation
 		if (nodesToUpdate.length > 0) {
 			pendingNodeUpdates = [...nodesToUpdate];
-			// Recalculate routes for affected nodes after FlowUpdater processes
-			setTimeout(() => {
-				const connections = get(graphStore.connections);
-				routingStore.recalculateRoutesForNodes(new Set(nodesToUpdate), connections, getPortInfo);
-			}, 0);
+			// Report affected nodes to routing after FlowUpdater processes
+			setTimeout(() => routingSync.syncNodes(nodesToUpdate), 0);
 		}
 
 		// Mark initial load as complete after first non-empty sync
@@ -680,8 +566,8 @@
 	cleanups.push(graphStore.currentPath.subscribe((path) => {
 		currentPath = path;
 		updateEventNodes();
-		// Clear grid and routes when navigating - forces full rebuild for new context
-		routingStore.clearContext();
+		// Routes belong to one graph level; start over when navigating
+		routingSync.reset();
 	}));
 
 	// Subscribe to root-level events (eventStore)
@@ -712,6 +598,10 @@
 		return ids;
 	}
 
+	// Edge highlights for the hovered handle and selected node, computed centrally
+	const edgeHighlighter = createEdgeHighlighter(() => edges);
+	cleanups.push(edgeHighlighter.destroy);
+
 	function rebuildEdges(connections: Connection[]): void {
 		const visibleIds = getVisibleNodeIds();
 		const currentEdgeSelection = new Map(edges.map((e) => [e.id, e.selected]));
@@ -722,6 +612,7 @@
 				if (currentEdgeSelection.get(conn.id)) edge.selected = true;
 				return edge;
 			});
+		edgeHighlighter.refresh();
 	}
 
 	// Subscribe to current connections (filtered by current navigation context)
@@ -756,39 +647,28 @@
 		}
 	}
 
-	// Handle node drag - reroute at discrete grid positions (only affected routes)
+	// Handle node drag - report blocks that reached a new grid position to routing
 	function handleNodeDrag({ nodes: draggedNodes }: { nodes: Node[] }) {
-		// Check if any node moved to a new grid position
-		const changedNodeIds = new Set<string>();
+		const positions = new Map<string, Position>();
+		const moved: string[] = [];
 		for (const node of draggedNodes) {
-			// Skip non-block nodes (events, annotations don't affect routing)
+			// Events and annotations don't affect routing
 			if (node.type !== 'pathview') continue;
 
-			const snappedX = Math.round(node.position.x / GRID_SIZE) * GRID_SIZE;
-			const snappedY = Math.round(node.position.y / GRID_SIZE) * GRID_SIZE;
+			const snapped = {
+				x: Math.round(node.position.x / GRID_SIZE) * GRID_SIZE,
+				y: Math.round(node.position.y / GRID_SIZE) * GRID_SIZE
+			};
+			positions.set(node.id, snapped);
+
 			const lastPos = lastDraggedPositions.get(node.id);
-
-			if (!lastPos || lastPos.x !== snappedX || lastPos.y !== snappedY) {
-				lastDraggedPositions.set(node.id, { x: snappedX, y: snappedY });
-				changedNodeIds.add(node.id);
-
-				// Incrementally update grid obstacle for this node
-				const width = node.measured?.width ?? node.width ?? DEFAULT_NODE_WIDTH;
-				const height = node.measured?.height ?? node.height ?? DEFAULT_NODE_HEIGHT;
-				routingStore.updateNodeBounds(node.id, {
-					x: snappedX - width / 2,
-					y: snappedY - height / 2,
-					width,
-					height
-				});
+			if (!lastPos || lastPos.x !== snapped.x || lastPos.y !== snapped.y) {
+				lastDraggedPositions.set(node.id, snapped);
+				moved.push(node.id);
 			}
 		}
 
-		// Only recalculate routes connected to moved nodes
-		if (changedNodeIds.size > 0) {
-			const connections = get(graphStore.connections);
-			routingStore.recalculateRoutesForNodes(changedNodeIds, connections, getPortInfo);
-		}
+		if (moved.length > 0) routingSync.syncNodes(moved, positions);
 	}
 
 	// Handle node drag end - sync position back to store and finalize undo entry
@@ -814,8 +694,8 @@
 		}
 		historyStore.endDrag();
 
-		// Update routing context and recalculate routes (final)
-		updateRoutingContext();
+		// Report final positions to routing
+		scheduleRoutingUpdate();
 	}
 
 	// Handle node and edge delete
@@ -888,6 +768,7 @@
 		// Force sync edges from store after deletion
 		const afterConnections = get(graphStore.connections);
 		edges = afterConnections.map(toFlowEdge);
+		edgeHighlighter.refresh();
 
 		isSyncing = false;
 	}
@@ -1098,6 +979,7 @@
 		onedgecontextmenu={readonly ? undefined : handleEdgeContextMenu}
 		onpanecontextmenu={readonly ? undefined : handlePaneContextMenu}
 		nodeOrigin={[0.5, 0.5]}
+		minZoom={CANVAS_MIN_ZOOM}
 		{...{ snapToGrid: true, snapGrid: SNAP_GRID } as any}
 		deleteKeyCode={readonly ? null : ['Delete', 'Backspace']}
 		selectionKeyCode={readonly ? null : ['Shift']}

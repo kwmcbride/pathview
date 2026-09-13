@@ -1,39 +1,44 @@
 <script module lang="ts">
-	import { writable } from 'svelte/store';
+	import type { PortInfo } from '$lib/stores/routing';
 
 	// Module-level drag state - persists across component recreation
 	interface DragState {
 		edgeId: string;
 		waypointId: string;
 		lastSnappedPos: { x: number; y: number };
-		getPortInfo: (nodeId: string, portIndex: number, isOutput: boolean) => import('$lib/stores/routing').PortInfo | null;
+		getPortInfo: (nodeId: string, portIndex: number, isOutput: boolean) => PortInfo | null;
 		cleanup: () => void;
 	}
 
-	// Use a store so components can reactively track drag state
-	const activeDragStore = writable<DragState | null>(null);
 	let activeDrag: DragState | null = null;
 
-	// Keep activeDrag in sync for non-reactive access in handlers
-	activeDragStore.subscribe(v => activeDrag = v);
+	// Reactive view of the drag for rendering
+	const dragView = $state<{ edgeId: string | null; waypointId: string | null }>({
+		edgeId: null,
+		waypointId: null
+	});
+
+	function setActiveDrag(drag: DragState | null): void {
+		activeDrag = drag;
+		dragView.edgeId = drag?.edgeId ?? null;
+		dragView.waypointId = drag?.waypointId ?? null;
+	}
 </script>
 
 <script lang="ts">
 	import { BaseEdge, getSmoothStepPath, type EdgeProps, Position } from '@xyflow/svelte';
-	import { hoveredHandle, selectedNodeHighlight } from '$lib/stores/hoveredHandle';
-	import { routingStore, type PortInfo } from '$lib/stores/routing';
+	import { routingStore } from '$lib/stores/routing';
+	import { edgeHighlights } from '$lib/stores/edgeHighlight';
 	import { historyStore } from '$lib/stores/history';
 	import { screenToFlow } from '$lib/utils/viewUtils';
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
-	import type { RouteResult, Direction } from '$lib/routing';
+	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
 	let {
 		id,
 		source,
 		target,
-		sourceHandleId,
-		targetHandleId,
 		sourceX,
 		sourceY,
 		targetX,
@@ -45,7 +50,19 @@
 		data
 	}: EdgeProps = $props();
 
-	import { onDestroy } from 'svelte';
+	/** Arrow angle when a fallback path enters the target handle */
+	const ARRIVAL_ANGLE: Record<Position, number> = {
+		[Position.Left]: 0,
+		[Position.Right]: 180,
+		[Position.Top]: 90,
+		[Position.Bottom]: -90
+	};
+
+	/** Minimum distance of a segment midpoint handle from an existing waypoint */
+	const MIN_DISTANCE_FROM_WAYPOINT = 20;
+
+	/** Segments shorter than this get no midpoint handle */
+	const MIN_SEGMENT_LENGTH = 30;
 
 	// Convert SvelteFlow Position to routing Direction
 	function positionToDirection(pos: Position): Direction {
@@ -58,7 +75,7 @@
 		}
 	}
 
-	// Create getPortInfo callback for route recalculation during drag
+	// Port info of this edge's endpoints, used when cleaning up waypoints after a drag
 	function getPortInfo(nodeId: string, portIndex: number, isOutput: boolean): PortInfo | null {
 		if (isOutput && nodeId === source) {
 			return {
@@ -75,67 +92,56 @@
 		return null;
 	}
 
-	// Subscribe to drag state store for reactive updates
-	let currentDrag = $state<DragState | null>(null);
-	activeDragStore.subscribe(v => currentDrag = v);
+	const isDragging = $derived(dragView.edgeId === id);
+	const draggingWaypointId = $derived(isDragging ? dragView.waypointId : null);
 
-	// Derived drag state
-	const isDragging = $derived(currentDrag?.edgeId === id);
-	const draggingWaypointId = $derived(currentDrag?.edgeId === id ? currentDrag.waypointId : null);
+	function snapToGrid(clientX: number, clientY: number): { x: number; y: number } {
+		const flowPos = screenToFlow({ x: clientX, y: clientY });
+		return {
+			x: Math.round(flowPos.x / GRID_SIZE) * GRID_SIZE,
+			y: Math.round(flowPos.y / GRID_SIZE) * GRID_SIZE
+		};
+	}
 
-	// Start waypoint drag - uses module-level state that persists across component recreation
-	function handleWaypointPointerDown(event: PointerEvent, waypoint: Waypoint) {
-		event.stopPropagation();
-		event.preventDefault();
-
-		// Document-level handlers that use module state
+	// Drag a waypoint using document-level handlers and the module drag state
+	function startWaypointDrag(waypointId: string, startPos: { x: number; y: number }) {
 		const onMove = (e: PointerEvent) => {
 			if (!activeDrag || activeDrag.edgeId !== id) return;
-
 			e.stopPropagation();
 			e.preventDefault();
 
-			const flowPos = screenToFlow({ x: e.clientX, y: e.clientY });
-			const snappedPos = {
-				x: Math.round(flowPos.x / GRID_SIZE) * GRID_SIZE,
-				y: Math.round(flowPos.y / GRID_SIZE) * GRID_SIZE
-			};
+			const snapped = snapToGrid(e.clientX, e.clientY);
+			// Only update if the position actually changed on the grid
+			if (snapped.x === activeDrag.lastSnappedPos.x && snapped.y === activeDrag.lastSnappedPos.y) return;
+			activeDrag.lastSnappedPos = snapped;
 
-			// Only update if position actually changed on the grid
-			if (snappedPos.x === activeDrag.lastSnappedPos.x && snappedPos.y === activeDrag.lastSnappedPos.y) {
-				return;
-			}
-			activeDrag.lastSnappedPos = snappedPos;
+			routingStore.moveWaypoint(activeDrag.edgeId, activeDrag.waypointId, snapped);
+		};
 
-			routingStore.moveWaypoint(activeDrag.edgeId, activeDrag.waypointId, snappedPos, activeDrag.getPortInfo);
+		const removeListeners = () => {
+			document.removeEventListener('pointermove', onMove, { capture: true });
+			document.removeEventListener('pointerup', onUp, { capture: true });
 		};
 
 		const onUp = (e: PointerEvent) => {
 			if (!activeDrag) return;
 			e.stopPropagation();
 			e.preventDefault();
-
-			// Cleanup
-			document.removeEventListener('pointermove', onMove, { capture: true });
-			document.removeEventListener('pointerup', onUp, { capture: true });
+			removeListeners();
 
 			const dragState = activeDrag;
-			activeDragStore.set(null);
+			setActiveDrag(null);
 
 			historyStore.endDrag();
 			routingStore.cleanupWaypoints(dragState.edgeId, dragState.getPortInfo);
 		};
 
-		// Store drag state at module level (use store for reactivity)
-		activeDragStore.set({
+		setActiveDrag({
 			edgeId: id,
-			waypointId: waypoint.id,
-			lastSnappedPos: { ...waypoint.position },
+			waypointId,
+			lastSnappedPos: { ...startPos },
 			getPortInfo,
-			cleanup: () => {
-				document.removeEventListener('pointermove', onMove, { capture: true });
-				document.removeEventListener('pointerup', onUp, { capture: true });
-			}
+			cleanup: removeListeners
 		});
 
 		historyStore.beginDrag();
@@ -143,90 +149,46 @@
 		document.addEventListener('pointerup', onUp, { capture: true });
 	}
 
+	function handleWaypointPointerDown(event: PointerEvent, waypoint: Waypoint) {
+		event.stopPropagation();
+		event.preventDefault();
+		startWaypointDrag(waypoint.id, waypoint.position);
+	}
+
 	// Double-click to delete waypoint
 	function handleWaypointDoubleClick(event: MouseEvent, waypoint: Waypoint) {
 		event.stopPropagation();
 		event.preventDefault();
-		routingStore.removeUserWaypoint(id, waypoint.id, getPortInfo);
+		routingStore.removeUserWaypoint(id, waypoint.id);
 	}
 
-	// Get cached route from routing store
-	let routeResult = $state<RouteResult | null>(null);
-	let unsubscribeRoute: (() => void) | null = null;
+	// Route from the routing store, reactive for this connection only
+	const routeResult = $derived(routingStore.route(id) ?? null);
 
-	// Subscribe to route changes using $effect to capture id reactively
-	$effect(() => {
-		// Unsubscribe from previous if any
-		if (unsubscribeRoute) unsubscribeRoute();
-		// Subscribe to new route
-		unsubscribeRoute = routingStore.getRoute(id).subscribe((r) => (routeResult = r));
+	// Last usable orthogonal route; kept while a new route is pending or unavailable
+	let lastValidRoute: RouteResult | null = null;
+	const displayedRoute = $derived.by(() => {
+		if (routeResult && routeResult.path.length >= 1 && !routeResult.isFallback) lastValidRoute = routeResult;
+		return lastValidRoute;
 	});
 
-	// Check if this edge is connected to the hovered handle
-	let hovered = $state<{ nodeId: string; handleId: string; color?: string } | null>(null);
-	const unsubscribeHovered = hoveredHandle.subscribe((h) => (hovered = h));
+	// Highlight color when attached to the hovered handle or the selected node
+	const highlightColor = $derived(edgeHighlights.get(id));
 
-	// Check if this edge is connected to a selected node
-	let selectedNode = $state<{ nodeId: string; color?: string } | null>(null);
-	const unsubscribeSelected = selectedNodeHighlight.subscribe((s) => (selectedNode = s));
+	/** Move a point along a handle's facing direction */
+	function alongFacing(x: number, y: number, position: Position, distance: number): { x: number; y: number } {
+		switch (position) {
+			case Position.Right: return { x: x + distance, y };
+			case Position.Left: return { x: x - distance, y };
+			case Position.Bottom: return { x, y: y + distance };
+			case Position.Top: return { x, y: y - distance };
+			default: return { x, y };
+		}
+	}
 
-	// Cleanup all subscriptions on destroy
-	onDestroy(() => {
-		if (unsubscribeRoute) unsubscribeRoute();
-		unsubscribeHovered();
-		unsubscribeSelected();
-	});
-
-	const isHoverHighlighted = $derived(() => {
-		if (!hovered) return false;
-		return (
-			(source === hovered.nodeId && sourceHandleId === hovered.handleId) ||
-			(target === hovered.nodeId && targetHandleId === hovered.handleId)
-		);
-	});
-
-	const isSelectionHighlighted = $derived(() => {
-		if (!selectedNode) return false;
-		return source === selectedNode.nodeId || target === selectedNode.nodeId;
-	});
-
-	const isHighlighted = $derived(() => isHoverHighlighted() || isSelectionHighlighted());
-
-	const highlightColor = $derived(() => {
-		if (isHoverHighlighted()) return hovered?.color || 'var(--accent)';
-		if (isSelectionHighlighted()) return selectedNode?.color || 'var(--accent)';
-		return 'var(--accent)';
-	});
-
-	// Offset to start/end path at handle tips (not centers)
-	// Source: small inset from handle edge
-	// Target: larger offset to leave room for arrowhead
-	const sourceOffset = EDGE_SOURCE_OFFSET;
-	const targetOffset = EDGE_TARGET_OFFSET;
-
-	// Adjusted source position based on handle direction
-	const adjustedSource = $derived(() => {
-		let x = sourceX;
-		let y = sourceY;
-		if (sourcePosition === 'right') x -= sourceOffset;
-		else if (sourcePosition === 'left') x += sourceOffset;
-		else if (sourcePosition === 'bottom') y -= sourceOffset;
-		else if (sourcePosition === 'top') y += sourceOffset;
-		return { x, y };
-	});
-
-	// Adjusted target position based on handle direction
-	const adjustedTarget = $derived(() => {
-		let x = targetX;
-		let y = targetY;
-		if (targetPosition === 'right') x += targetOffset;
-		else if (targetPosition === 'left') x -= targetOffset;
-		else if (targetPosition === 'bottom') y += targetOffset;
-		else if (targetPosition === 'top') y -= targetOffset;
-		return { x, y };
-	});
-
-	const CORNER_RADIUS = EDGE_CORNER_RADIUS;
+	// Path ends at the handle tips: small inset at the source, room for the arrowhead at the target
+	const adjustedSource = $derived(alongFacing(sourceX, sourceY, sourcePosition, -EDGE_SOURCE_OFFSET));
+	const adjustedTarget = $derived(alongFacing(targetX, targetY, targetPosition, EDGE_TARGET_OFFSET));
 
 	/**
 	 * Build SVG path with rounded corners using quadratic bezier curves
@@ -244,7 +206,6 @@
 			const curr = points[i];
 			const next = points[i + 1];
 
-			// Calculate distances to prev and next
 			const distPrev = Math.hypot(curr.x - prev.x, curr.y - prev.y);
 			const distNext = Math.hypot(next.x - curr.x, next.y - curr.y);
 
@@ -257,13 +218,11 @@
 				continue;
 			}
 
-			// Direction vectors (normalized)
 			const dxPrev = (prev.x - curr.x) / distPrev;
 			const dyPrev = (prev.y - curr.y) / distPrev;
 			const dxNext = (next.x - curr.x) / distNext;
 			const dyNext = (next.y - curr.y) / distNext;
 
-			// Points where curve starts and ends
 			const startX = curr.x + dxPrev * r;
 			const startY = curr.y + dyPrev * r;
 			const endX = curr.x + dxNext * r;
@@ -273,171 +232,78 @@
 			d += ` L ${startX} ${startY} Q ${curr.x} ${curr.y} ${endX} ${endY}`;
 		}
 
-		// Line to final point
 		const last = points[points.length - 1];
 		d += ` L ${last.x} ${last.y}`;
 
 		return d;
 	}
 
-	// Cache last valid path (non-fallback) for smooth transitions
-	let cachedPath = $state('');
-
-	// Update cached path only when we have a valid (non-fallback) route
-	$effect(() => {
-		if (routeResult?.path && routeResult.path.length >= 1 && !routeResult.isFallback) {
-			const src = adjustedSource();
-			const tgt = adjustedTarget();
-			const allPoints = [src, ...routeResult.path, tgt];
-			cachedPath = buildRoundedPath(allPoints, CORNER_RADIUS);
+	// Rounded orthogonal path, or a smooth-step path while no route is available
+	const path = $derived.by(() => {
+		if (displayedRoute) {
+			return buildRoundedPath([adjustedSource, ...displayedRoute.path, adjustedTarget], EDGE_CORNER_RADIUS);
 		}
-	});
-
-	// Smooth-step fallback when no valid orthogonal path exists
-	const smoothStepFallback = $derived(() => {
-		const src = adjustedSource();
-		const tgt = adjustedTarget();
-		const [edgePath] = getSmoothStepPath({
-			sourceX: src.x,
-			sourceY: src.y,
+		return getSmoothStepPath({
+			sourceX: adjustedSource.x,
+			sourceY: adjustedSource.y,
 			sourcePosition,
-			targetX: tgt.x,
-			targetY: tgt.y,
+			targetX: adjustedTarget.x,
+			targetY: adjustedTarget.y,
 			targetPosition,
 			borderRadius: 8
-		});
-		return edgePath;
+		})[0];
 	});
 
-	// Use cached orthogonal path, or fall back to smooth-step
-	const pathInfo = $derived(() => {
-		if (cachedPath) return { path: cachedPath, isFallback: false };
-		return { path: smoothStepFallback(), isFallback: true };
-	});
-
-	// Get user waypoints from route result or data
-	const userWaypoints = $derived(() => {
-		if (routeResult?.waypoints) {
-			return routeResult.waypoints.filter((w) => w.isUserWaypoint);
+	// Arrow at the end of the path, pointing along the last segment
+	const endArrow = $derived.by(() => {
+		const tip = adjustedTarget;
+		if (displayedRoute) {
+			const prev = displayedRoute.path[displayedRoute.path.length - 1];
+			return { x: tip.x, y: tip.y, angle: Math.atan2(tip.y - prev.y, tip.x - prev.x) * (180 / Math.PI) };
 		}
-		// Fallback to data if route not calculated yet
-		const dataWaypoints = (data as { waypoints?: Waypoint[] })?.waypoints;
-		return dataWaypoints?.filter((w) => w.isUserWaypoint) || [];
+		return { x: tip.x, y: tip.y, angle: ARRIVAL_ANGLE[targetPosition] ?? 0 };
 	});
 
-	// Calculate segment midpoints for adding new waypoints
-	const segmentMidpoints = $derived(() => {
-		if (!routeResult?.path || routeResult.path.length < 1) return [];
+	// User waypoints from the route result, or from the connection while no route exists yet
+	const userWaypoints = $derived(
+		(routeResult?.waypoints ?? (data as { waypoints?: Waypoint[] } | undefined)?.waypoints ?? []).filter(
+			(w) => w.isUserWaypoint
+		)
+	);
 
-		const src = adjustedSource();
-		const tgt = adjustedTarget();
-		const allPoints = [src, ...routeResult.path, tgt];
-		const waypoints = userWaypoints();
+	// Waypoint handles are visible when the edge is selected or being dragged
+	const waypointsVisible = $derived(selected || isDragging);
 
-		// Helper to check if a point is too close to any waypoint
-		const MIN_DISTANCE_FROM_WAYPOINT = 20;
-		const isTooCloseToWaypoint = (x: number, y: number): boolean => {
-			for (const wp of waypoints) {
-				const dist = Math.hypot(wp.position.x - x, wp.position.y - y);
-				if (dist < MIN_DISTANCE_FROM_WAYPOINT) return true;
-			}
-			return false;
-		};
+	// Midpoint handles for adding waypoints, only computed while visible
+	const segmentMidpoints = $derived.by(() => {
+		if (!waypointsVisible || !displayedRoute) return [];
 
+		const points = [adjustedSource, ...displayedRoute.path, adjustedTarget];
 		const midpoints: Array<{ x: number; y: number; segmentIndex: number }> = [];
-		for (let i = 0; i < allPoints.length - 1; i++) {
-			const p1 = allPoints[i];
-			const p2 = allPoints[i + 1];
-			// Only show midpoints on segments longer than 30px
-			const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-			if (dist > 30) {
-				const midX = (p1.x + p2.x) / 2;
-				const midY = (p1.y + p2.y) / 2;
-				// Skip if too close to an existing waypoint
-				if (!isTooCloseToWaypoint(midX, midY)) {
-					midpoints.push({
-						x: midX,
-						y: midY,
-						segmentIndex: i
-					});
-				}
-			}
+		for (let i = 0; i < points.length - 1; i++) {
+			const p1 = points[i];
+			const p2 = points[i + 1];
+			if (Math.hypot(p2.x - p1.x, p2.y - p1.y) <= MIN_SEGMENT_LENGTH) continue;
+
+			const x = (p1.x + p2.x) / 2;
+			const y = (p1.y + p2.y) / 2;
+			const nearWaypoint = userWaypoints.some(
+				(wp) => Math.hypot(wp.position.x - x, wp.position.y - y) < MIN_DISTANCE_FROM_WAYPOINT
+			);
+			if (!nearWaypoint) midpoints.push({ x, y, segmentIndex: i });
 		}
 		return midpoints;
 	});
 
-	// Derived visibility state for waypoints - visible when selected OR during drag on this edge
-	const waypointsVisible = $derived(() => selected || isDragging);
-
-	// Segment drag creates a waypoint then starts dragging it (reuses module-level drag state)
+	// Segment drag creates a waypoint, then drags it
 	function handleSegmentPointerDown(event: PointerEvent, segmentIndex: number) {
 		event.stopPropagation();
 		event.preventDefault();
 
-		const flowPos = screenToFlow({ x: event.clientX, y: event.clientY });
-		const snappedPos = {
-			x: Math.round(flowPos.x / GRID_SIZE) * GRID_SIZE,
-			y: Math.round(flowPos.y / GRID_SIZE) * GRID_SIZE
-		};
-
-		// Count how many waypoints appear before this segment in the path
-		const waypoints = userWaypoints();
-		const insertIndex = countWaypointsBeforeSegment(segmentIndex, waypoints);
-
-		// Create waypoint at correct position in the array
-		const waypointId = routingStore.addUserWaypointAtIndex(id, snappedPos, insertIndex, getPortInfo);
-		if (waypointId) {
-			// Set up drag using the same module-level mechanism as waypoint drag
-			const onMove = (e: PointerEvent) => {
-				if (!activeDrag || activeDrag.edgeId !== id) return;
-
-				e.stopPropagation();
-				e.preventDefault();
-
-				const pos = screenToFlow({ x: e.clientX, y: e.clientY });
-				const snap = {
-					x: Math.round(pos.x / GRID_SIZE) * GRID_SIZE,
-					y: Math.round(pos.y / GRID_SIZE) * GRID_SIZE
-				};
-
-				if (snap.x === activeDrag.lastSnappedPos.x && snap.y === activeDrag.lastSnappedPos.y) {
-					return;
-				}
-				activeDrag.lastSnappedPos = snap;
-
-				routingStore.moveWaypoint(activeDrag.edgeId, activeDrag.waypointId, snap, activeDrag.getPortInfo);
-			};
-
-			const onUp = (e: PointerEvent) => {
-				if (!activeDrag) return;
-				e.stopPropagation();
-				e.preventDefault();
-
-				document.removeEventListener('pointermove', onMove, { capture: true });
-				document.removeEventListener('pointerup', onUp, { capture: true });
-
-				const dragState = activeDrag;
-				activeDragStore.set(null);
-
-				historyStore.endDrag();
-				routingStore.cleanupWaypoints(dragState.edgeId, dragState.getPortInfo);
-			};
-
-			activeDragStore.set({
-				edgeId: id,
-				waypointId,
-				lastSnappedPos: snappedPos,
-				getPortInfo,
-				cleanup: () => {
-					document.removeEventListener('pointermove', onMove, { capture: true });
-					document.removeEventListener('pointerup', onUp, { capture: true });
-				}
-			});
-
-			historyStore.beginDrag();
-			document.addEventListener('pointermove', onMove, { capture: true });
-			document.addEventListener('pointerup', onUp, { capture: true });
-		}
+		const snappedPos = snapToGrid(event.clientX, event.clientY);
+		const insertIndex = countWaypointsBeforeSegment(segmentIndex, userWaypoints);
+		const waypointId = routingStore.addUserWaypointAtIndex(id, snappedPos, insertIndex);
+		if (waypointId) startWaypointDrag(waypointId, snappedPos);
 	}
 
 	/**
@@ -446,89 +312,47 @@
 	 * are before vs after the segment.
 	 */
 	function countWaypointsBeforeSegment(segmentIndex: number, waypoints: Waypoint[]): number {
-		if (waypoints.length === 0) return 0;
-		if (!routeResult?.path) return 0;
+		if (waypoints.length === 0 || !displayedRoute) return 0;
 
-		const src = adjustedSource();
-		const tgt = adjustedTarget();
-		const allPoints = [src, ...routeResult.path, tgt];
+		const points = [adjustedSource, ...displayedRoute.path, adjustedTarget];
 
-		// Compute cumulative distances along the path
 		const cumDist: number[] = [0];
-		for (let i = 1; i < allPoints.length; i++) {
-			const prev = allPoints[i - 1];
-			const curr = allPoints[i];
-			cumDist.push(cumDist[i - 1] + Math.hypot(curr.x - prev.x, curr.y - prev.y));
+		for (let i = 1; i < points.length; i++) {
+			cumDist.push(cumDist[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y));
 		}
 
-		// Distance to segment midpoint
 		const segMidDist = (cumDist[segmentIndex] + cumDist[segmentIndex + 1]) / 2;
 
-		// For each waypoint, find its distance along the path (closest point's cumulative distance)
+		// A waypoint counts as before the segment if its closest path point lies before the segment midpoint
 		let count = 0;
 		for (const wp of waypoints) {
 			let closestPointDist = Infinity;
 			let closestCumDist = 0;
-			for (let i = 0; i < allPoints.length; i++) {
-				const pt = allPoints[i];
-				const dist = Math.hypot(pt.x - wp.position.x, pt.y - wp.position.y);
+			for (let i = 0; i < points.length; i++) {
+				const dist = Math.hypot(points[i].x - wp.position.x, points[i].y - wp.position.y);
 				if (dist < closestPointDist) {
 					closestPointDist = dist;
 					closestCumDist = cumDist[i];
 				}
 			}
-			// If waypoint is before segment midpoint along the path, count it
-			if (closestCumDist < segMidDist) {
-				count++;
-			}
+			if (closestCumDist < segMidDist) count++;
 		}
-
 		return count;
 	}
-
-	// Arrow at end of path
-	const endArrow = $derived(() => {
-		const tgt = adjustedTarget();
-		const { isFallback } = pathInfo();
-
-		if (!isFallback && routeResult?.path && routeResult.path.length >= 1) {
-			const path = routeResult.path;
-			const endPoint = tgt;
-			// The last segment is from path's last point (targetStubEnd) to tgt
-			const prevPoint = path[path.length - 1];
-
-			const dx = endPoint.x - prevPoint.x;
-			const dy = endPoint.y - prevPoint.y;
-			const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-
-			return { x: endPoint.x, y: endPoint.y, angle };
-		}
-
-		// Fallback (smoothstep): derive arrow position and angle from SVG path geometry
-		const { path } = pathInfo();
-		if (path) {
-			const svgPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-			svgPath.setAttribute('d', path);
-			const totalLength = svgPath.getTotalLength();
-			const endPoint = svgPath.getPointAtLength(totalLength);
-			const nearEnd = svgPath.getPointAtLength(totalLength - 5);
-			const angle = Math.atan2(endPoint.y - nearEnd.y, endPoint.x - nearEnd.x) * (180 / Math.PI);
-			return { x: endPoint.x, y: endPoint.y, angle };
-		}
-
-		return { x: tgt.x, y: tgt.y, angle: 0 };
-	});
 </script>
 
-<g class:highlighted={isHighlighted()} style="--highlight-color: {highlightColor()}">
-	<BaseEdge {id} path={pathInfo().path} {style} />
+<g
+	class:highlighted={highlightColor !== undefined}
+	style={highlightColor !== undefined ? `--highlight-color: ${highlightColor}` : undefined}
+>
+	<BaseEdge {id} {path} {style} />
 
-	<!-- User waypoint markers (always in DOM, visibility controlled by derived state) -->
+	<!-- Waypoint handles (always in DOM, visibility via style) -->
 	<g
 		class="waypoint-group"
-		style="opacity: {waypointsVisible() ? 1 : 0}; pointer-events: {waypointsVisible() ? 'all' : 'none'};"
+		style="opacity: {waypointsVisible ? 1 : 0}; pointer-events: {waypointsVisible ? 'all' : 'none'};"
 	>
-		{#each userWaypoints() as waypoint (waypoint.id)}
+		{#each userWaypoints as waypoint (waypoint.id)}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<circle
 				cx={waypoint.position.x}
@@ -542,7 +366,7 @@
 		{/each}
 
 		<!-- Segment midpoint indicators (ghost waypoints) -->
-		{#each segmentMidpoints() as midpoint (midpoint.segmentIndex)}
+		{#each segmentMidpoints as midpoint (midpoint.segmentIndex)}
 			<circle
 				cx={midpoint.x}
 				cy={midpoint.y}
@@ -554,14 +378,12 @@
 	</g>
 
 	<!-- Arrow at the end - offset forward 5px to reach target handle tip -->
-	<g
-		transform="translate({endArrow().x}, {endArrow().y}) rotate({endArrow().angle}) translate(5, 0)"
-	>
+	<g transform="translate({endArrow.x}, {endArrow.y}) rotate({endArrow.angle}) translate(5, 0)">
 		<path
 			d="M -5 -2.5 L -1 -0.5 Q 0 0 -1 0.5 L -5 2.5 Q -6 3 -6 2 L -6 -2 Q -6 -3 -5 -2.5 Z"
 			class="edge-arrow"
 			class:selected
-			class:highlighted={isHighlighted()}
+			class:highlighted={highlightColor !== undefined}
 		/>
 	</g>
 </g>

@@ -15,6 +15,9 @@ export const PANEL_TOGGLES_WIDTH = 52;
 /** Minimum width for bottom panels when split */
 export const MIN_BOTTOM_PANEL_WIDTH = 300;
 
+/** Smallest canvas zoom; low enough that zooming out is effectively unlimited */
+export const CANVAS_MIN_ZOOM = 0.01;
+
 /** Default offset for duplicated nodes */
 export const DUPLICATE_OFFSET = { x: 50, y: 50 };
 
