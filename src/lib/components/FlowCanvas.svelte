@@ -25,7 +25,8 @@
 	import { selectedNodeIds as graphSelectedNodeIds } from '$lib/stores/graph/state';
 	import { historyStore } from '$lib/stores/history';
 	import { routingStore, buildRoutingContext, type PortInfo } from '$lib/stores/routing';
-	import { HANDLE_OFFSET, ARROW_INSET, type Direction, type PortStub } from '$lib/routing';
+	import { getPortInfo as computePortInfo, type PortStub } from '$lib/routing';
+	import type { RotationValue } from '$lib/types/common';
 	import { themeStore, type Theme } from '$lib/stores/theme';
 	import { clearSelectionTrigger, nudgeTrigger, selectNodeTrigger, registerHasSelection, triggerFitView } from '$lib/stores/viewActions';
 	import { screenToFlow } from '$lib/utils/viewUtils';
@@ -270,9 +271,7 @@
 		pendingNodeUpdates = [];
 	}
 
-	// Helper to get port position and direction in world coordinates
-	// Returns handle tip position (accounting for handle offset from block edge)
-	// For inputs, also accounts for arrowhead so stub starts within arrow
+	// Port handle tip position and direction in world coordinates
 	function getPortInfo(nodeId: string, portIndex: number, isOutput: boolean): PortInfo | null {
 		const node = nodeMap.get(nodeId);
 		if (!node) return null;
@@ -281,75 +280,11 @@
 		const ports = isOutput ? nodeData.outputs : nodeData.inputs;
 		if (portIndex >= ports.length) return null;
 
-		const rotation = (nodeData.params?.['_rotation'] as number) || 0;
+		const rotation = ((nodeData.params?.['_rotation'] as number) || 0) as RotationValue;
 		const width = node.measured?.width ?? node.width ?? DEFAULT_NODE_WIDTH;
 		const height = node.measured?.height ?? node.height ?? DEFAULT_NODE_HEIGHT;
 
-		// Calculate port offset from center based on rotation
-		const portCount = ports.length;
-		const portSpacing = 20; // G.x2
-		const span = (portCount - 1) * portSpacing;
-		const offsetFromCenter = -span / 2 + portIndex * portSpacing;
-
-		let x = node.position.x;
-		let y = node.position.y;
-		let direction: Direction;
-
-		// Additional offset: handle tip is HANDLE_OFFSET outside block edge
-		// For inputs (targets), add ARROW_INSET so stub starts within arrowhead
-		const extraOffset = isOutput ? HANDLE_OFFSET : (HANDLE_OFFSET + ARROW_INSET);
-
-		// Position and direction based on rotation (output = right side for rotation 0)
-		if (isOutput) {
-			switch (rotation) {
-				case 1: // outputs at bottom
-					x += offsetFromCenter;
-					y += height / 2 + extraOffset;
-					direction = 'down';
-					break;
-				case 2: // outputs at left
-					x -= width / 2 + extraOffset;
-					y += offsetFromCenter;
-					direction = 'left';
-					break;
-				case 3: // outputs at top
-					x += offsetFromCenter;
-					y -= height / 2 + extraOffset;
-					direction = 'up';
-					break;
-				default: // rotation 0 - outputs at right
-					x += width / 2 + extraOffset;
-					y += offsetFromCenter;
-					direction = 'right';
-					break;
-			}
-		} else {
-			// Inputs are opposite to outputs
-			switch (rotation) {
-				case 1: // inputs at top
-					x += offsetFromCenter;
-					y -= height / 2 + extraOffset;
-					direction = 'up';
-					break;
-				case 2: // inputs at right
-					x += width / 2 + extraOffset;
-					y += offsetFromCenter;
-					direction = 'right';
-					break;
-				case 3: // inputs at bottom
-					x += offsetFromCenter;
-					y += height / 2 + extraOffset;
-					direction = 'down';
-					break;
-				default: // rotation 0 - inputs at left
-					x -= width / 2 + extraOffset;
-					y += offsetFromCenter;
-					direction = 'left';
-					break;
-			}
-		}
-
-		return { position: { x, y }, direction };
+		return computePortInfo(node.position, width, height, rotation, portIndex, ports.length, isOutput);
 	}
 
 	// Update routing context and recalculate all routes

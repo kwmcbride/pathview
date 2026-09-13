@@ -38,6 +38,30 @@ export interface PortStub {
 	direction: Direction;
 }
 
+/** Port handle tip position and facing direction in world coordinates */
+export interface PortInfo {
+	position: Position;
+	direction: Direction;
+}
+
+/** One connection to route */
+export interface RouteRequest {
+	id: string;
+	/** Connections from the same output port share a net and may share grid cells */
+	netId: string;
+	source: PortInfo;
+	target: PortInfo;
+	/** User waypoints in route order */
+	waypoints: Waypoint[];
+}
+
+/** Complete routing input: obstacles and connections */
+export interface RoutingScene {
+	nodeBounds: Map<string, Bounds>;
+	portStubs: PortStub[];
+	requests: RouteRequest[];
+}
+
 /** Routing context passed to calculator */
 export interface RoutingContext {
 	/** Node ID -> bounding box (world coordinates, already includes margin) */

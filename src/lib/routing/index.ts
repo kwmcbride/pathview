@@ -8,6 +8,9 @@ export { calculateRoute, calculateRouteWithWaypoints, calculateSimpleRoute, getP
 // Grid
 export { SparseGrid } from './gridBuilder';
 
+// Port geometry
+export { getPortInfo } from './portGeometry';
+
 // Constants used by FlowCanvas
 export {
 	ROUTING_MARGIN,
@@ -23,4 +26,13 @@ export {
 } from './constants';
 
 // Types
-export type { Bounds, RoutingContext, RouteResult, Direction, PortStub } from './types';
+export type {
+	Bounds,
+	RoutingContext,
+	RouteResult,
+	Direction,
+	PortStub,
+	PortInfo,
+	RouteRequest,
+	RoutingScene
+} from './types';

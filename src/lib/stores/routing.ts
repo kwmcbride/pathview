@@ -5,7 +5,7 @@
 import { writable, derived, get } from 'svelte/store';
 import type { Position } from '$lib/types/common';
 import type { Connection, Waypoint } from '$lib/types/nodes';
-import type { RoutingContext, RouteResult, Bounds, Direction, PortStub } from '$lib/routing';
+import type { RoutingContext, RouteResult, Bounds, Direction, PortStub, PortInfo } from '$lib/routing';
 import {
 	calculateRoute,
 	calculateRouteWithWaypoints,
@@ -23,11 +23,7 @@ import { generateId } from '$lib/stores/utils';
 import { graphStore } from '$lib/stores/graph';
 import { historyStore } from '$lib/stores/history';
 
-/** Port info returned from getPortInfo callback */
-export interface PortInfo {
-	position: Position;
-	direction: Direction;
-}
+export type { PortInfo };
 
 /** Helper to extract user waypoints from a connection's waypoints array */
 function getUserWaypoints(waypoints?: Waypoint[]): Waypoint[] {
