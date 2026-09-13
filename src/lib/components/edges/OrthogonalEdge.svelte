@@ -34,7 +34,7 @@
 	import { historyStore } from '$lib/stores/history';
 	import { screenToFlow } from '$lib/utils/viewUtils';
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
-	import { EDGE_LABEL } from '$lib/constants/dimensions';
+	import InlineInput from '$lib/components/InlineInput.svelte';
 	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
@@ -302,9 +302,6 @@
 	const label = $derived((data as { label?: string } | undefined)?.label ?? '');
 	const isEditingLabel = $derived(edgeLabelEdit.connectionId === id);
 
-	// Editor width follows the typed text
-	let draftLength = $state(0);
-
 	const labelAnchor = $derived.by(() => {
 		if (!label && !isEditingLabel) return null;
 		const points = displayedRoute
@@ -332,42 +329,6 @@
 		editEdgeLabel(null);
 		if (text.trim() === label) return;
 		historyStore.mutate(() => graphStore.updateConnectionLabel(id, text));
-	}
-
-	/**
-	 * Label editor input. Enter commits, Escape cancels, a pointer press outside
-	 * the input commits. Blur alone never commits, because removing the editor
-	 * also blurs the input. Keys are stopped at the input so edge keyboard
-	 * handling and app shortcuts never see them. Focus waits until the input
-	 * sits in the label layer.
-	 */
-	function labelEditor(input: HTMLInputElement) {
-		const onKeydown = (event: KeyboardEvent) => {
-			event.stopPropagation();
-			if (event.key === 'Enter') commitLabel(input.value);
-			else if (event.key === 'Escape') editEdgeLabel(null);
-		};
-		const onPointerDown = (event: PointerEvent) => {
-			if (event.target !== input) commitLabel(input.value);
-		};
-		const onInput = () => {
-			draftLength = input.value.length;
-		};
-		draftLength = input.value.length;
-		input.addEventListener('keydown', onKeydown);
-		input.addEventListener('input', onInput);
-		document.addEventListener('pointerdown', onPointerDown, true);
-		requestAnimationFrame(() => {
-			input.focus();
-			input.select();
-		});
-		return {
-			destroy: () => {
-				input.removeEventListener('keydown', onKeydown);
-				input.removeEventListener('input', onInput);
-				document.removeEventListener('pointerdown', onPointerDown, true);
-			}
-		};
 	}
 
 	// Segment drag creates a waypoint, then drags it
@@ -477,13 +438,7 @@
 
 {#if isEditingLabel && labelAnchor}
 	<EdgeLabel x={labelAnchor.x} y={labelAnchor.y} transparent>
-		<input
-			class="edge-label-input"
-			style="--label-height: {EDGE_LABEL.height}px; --label-padding-x: {EDGE_LABEL.paddingX}px; --label-chars: {Math.max(draftLength, EDGE_LABEL.minChars)};"
-			value={label}
-			placeholder="Label"
-			use:labelEditor
-		/>
+		<InlineInput value={label} placeholder="Label" onCommit={commitLabel} onCancel={() => editEdgeLabel(null)} />
 	</EdgeLabel>
 {/if}
 
@@ -537,26 +492,6 @@
 
 	.edge-label.highlighted {
 		fill: var(--highlight-color, var(--accent));
-	}
-
-	/* Inline label editor: same capsule, active like a dragged waypoint */
-	.edge-label-input {
-		box-sizing: border-box;
-		height: var(--label-height);
-		width: calc(var(--label-chars) * 1ch + 2 * var(--label-padding-x));
-		padding: 0 var(--label-padding-x);
-		border: 1.5px solid var(--accent);
-		border-radius: calc(var(--label-height) / 2);
-		background: var(--surface);
-		color: var(--text);
-		font-family: var(--font-ui);
-		font-size: var(--font-xs);
-		text-align: center;
-		outline: none;
-	}
-
-	.edge-label-input::placeholder {
-		color: var(--text-muted);
 	}
 
 	/* Waypoint group - visibility controlled by inline styles */

@@ -36,14 +36,18 @@ export const HANDLE = {
 	hollowInset: 1.5
 } as const;
 
-/** Connection label capsule, shared by the drawn label and its inline editor */
-export const EDGE_LABEL = {
+/** Inline text input on the canvas (connection labels, bus signal names) */
+export const INLINE_INPUT = {
 	/** Capsule height in pixels */
 	height: 14,
 	/** Space between text and capsule ends in pixels */
 	paddingX: 6,
-	/** Minimum editor width in characters */
-	minChars: 5
+	/** Minimum capsule width in characters */
+	minChars: 5,
+	/** Screen distance between capsule and suggestion list in pixels */
+	listGap: 4,
+	/** Most suggestions shown at once */
+	maxSuggestions: 8
 } as const;
 
 /** Event node dimensions (grid-aligned) */
