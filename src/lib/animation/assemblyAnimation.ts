@@ -31,9 +31,15 @@ const CONFIG = {
 	nodeStagger: 50,         // Delay between nodes (ms)
 	flyDistanceMargin: 100,  // Extra margin beyond viewport edge (px in flow coords)
 
+	nodeLanded: 0.7,         // Share of a node's fly-in after which its edges may start drawing
+
 	// Edge animation
 	edgeDuration: 300,       // Duration of edge drawing (ms)
 	arrowDuration: 150,      // Duration of arrow pop-in (ms)
+
+	// Total duration
+	maxDuration: 2000,       // Upper bound for the whole animation; large graphs stagger faster (ms)
+	cleanupDelay: 200,       // Extra time before animation classes are removed (ms)
 
 	// Timing delays
 	initialDelay: 100,       // Wait for DOM to be ready (ms)
@@ -215,9 +221,18 @@ export function runAssemblyAnimation(
 // Internal Functions
 // ============================================================================
 
+/** Node stagger, shortened for large graphs so the whole animation stays within maxDuration */
+function nodeStaggerFor(nodeCount: number): number {
+	const fixed =
+		CONFIG.nodeDuration * (1 + CONFIG.nodeLanded) + CONFIG.edgeDuration + CONFIG.arrowDuration + CONFIG.cleanupDelay;
+	const budget = Math.max(0, CONFIG.maxDuration - fixed);
+	return Math.min(CONFIG.nodeStagger, budget / Math.max(1, nodeCount));
+}
+
 function calculateAnimationTiming(nodes: NodeInfo[], edges: EdgeInfo[], viewport: ViewportInfo): void {
 	// Shuffle nodes for organic feel
 	const shuffledNodes = [...nodes].sort(() => Math.random() - 0.5);
+	const stagger = nodeStaggerFor(shuffledNodes.length);
 
 	// Calculate top-left corner of viewport in flow coordinates
 	// This is where the PathView logo is
@@ -234,7 +249,7 @@ function calculateAnimationTiming(nodes: NodeInfo[], edges: EdgeInfo[], viewport
 	nodeFlyFrom = new Map();
 
 	shuffledNodes.forEach((node, index) => {
-		nodeDelays.set(node.id, index * CONFIG.nodeStagger);
+		nodeDelays.set(node.id, index * stagger);
 
 		// Calculate offset from node's final position to the spawn point
 		nodeFlyFrom.set(node.id, {
@@ -248,7 +263,7 @@ function calculateAnimationTiming(nodes: NodeInfo[], edges: EdgeInfo[], viewport
 	edges.forEach((edge) => {
 		const sourceDelay = nodeDelays.get(edge.source) ?? 0;
 		const targetDelay = nodeDelays.get(edge.target) ?? 0;
-		const bothNodesLanded = Math.max(sourceDelay, targetDelay) + CONFIG.nodeDuration * 0.7;
+		const bothNodesLanded = Math.max(sourceDelay, targetDelay) + CONFIG.nodeDuration * CONFIG.nodeLanded;
 		edgeDelays.set(edge.id, bothNodesLanded);
 	});
 
@@ -262,10 +277,10 @@ function calculateAnimationTiming(nodes: NodeInfo[], edges: EdgeInfo[], viewport
 	addSkipListeners();
 
 	// Schedule cleanup
-	const maxNodeDelay = shuffledNodes.length * CONFIG.nodeStagger;
+	const maxNodeDelay = shuffledNodes.length * stagger;
 	const maxEdgeDelay = Math.max(...Array.from(edgeDelays.values()), 0);
 	const totalDuration = Math.max(maxNodeDelay, maxEdgeDelay) +
-		CONFIG.nodeDuration + CONFIG.edgeDuration + CONFIG.arrowDuration + 200;
+		CONFIG.nodeDuration + CONFIG.edgeDuration + CONFIG.arrowDuration + CONFIG.cleanupDelay;
 
 	cleanupTimeoutId = setTimeout(cleanup, totalDuration);
 }
