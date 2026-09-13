@@ -26,12 +26,15 @@
 </script>
 
 <script lang="ts">
-	import { BaseEdge, getSmoothStepPath, type EdgeProps, Position } from '@xyflow/svelte';
+	import { BaseEdge, EdgeLabel, getSmoothStepPath, type EdgeProps, Position } from '@xyflow/svelte';
 	import { routingStore } from '$lib/stores/routing';
+	import { graphStore } from '$lib/stores/graph';
 	import { edgeHighlights } from '$lib/stores/edgeHighlight';
+	import { edgeLabelEdit, editEdgeLabel } from '$lib/stores/edgeLabelEdit.svelte';
 	import { historyStore } from '$lib/stores/history';
 	import { screenToFlow } from '$lib/utils/viewUtils';
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
+	import { EDGE_LABEL } from '$lib/constants/dimensions';
 	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
@@ -295,6 +298,78 @@
 		return midpoints;
 	});
 
+	// Connection label, shown on the middle of the longest route segment
+	const label = $derived((data as { label?: string } | undefined)?.label ?? '');
+	const isEditingLabel = $derived(edgeLabelEdit.connectionId === id);
+
+	// Editor width follows the typed text
+	let draftLength = $state(0);
+
+	const labelAnchor = $derived.by(() => {
+		if (!label && !isEditingLabel) return null;
+		const points = displayedRoute
+			? [adjustedSource, ...displayedRoute.path, adjustedTarget]
+			: [adjustedSource, adjustedTarget];
+		let anchor = points[0];
+		let longest = -1;
+		for (let i = 0; i < points.length - 1; i++) {
+			const length = Math.abs(points[i + 1].x - points[i].x) + Math.abs(points[i + 1].y - points[i].y);
+			if (length > longest) {
+				longest = length;
+				anchor = { x: (points[i].x + points[i + 1].x) / 2, y: (points[i].y + points[i + 1].y) / 2 };
+			}
+		}
+		return anchor;
+	});
+
+	function handleEdgeDoubleClick(event: MouseEvent) {
+		event.stopPropagation();
+		editEdgeLabel(id);
+	}
+
+	function commitLabel(text: string) {
+		if (edgeLabelEdit.connectionId !== id) return;
+		editEdgeLabel(null);
+		if (text.trim() === label) return;
+		historyStore.mutate(() => graphStore.updateConnectionLabel(id, text));
+	}
+
+	/**
+	 * Label editor input. Enter commits, Escape cancels, a pointer press outside
+	 * the input commits. Blur alone never commits, because removing the editor
+	 * also blurs the input. Keys are stopped at the input so edge keyboard
+	 * handling and app shortcuts never see them. Focus waits until the input
+	 * sits in the label layer.
+	 */
+	function labelEditor(input: HTMLInputElement) {
+		const onKeydown = (event: KeyboardEvent) => {
+			event.stopPropagation();
+			if (event.key === 'Enter') commitLabel(input.value);
+			else if (event.key === 'Escape') editEdgeLabel(null);
+		};
+		const onPointerDown = (event: PointerEvent) => {
+			if (event.target !== input) commitLabel(input.value);
+		};
+		const onInput = () => {
+			draftLength = input.value.length;
+		};
+		draftLength = input.value.length;
+		input.addEventListener('keydown', onKeydown);
+		input.addEventListener('input', onInput);
+		document.addEventListener('pointerdown', onPointerDown, true);
+		requestAnimationFrame(() => {
+			input.focus();
+			input.select();
+		});
+		return {
+			destroy: () => {
+				input.removeEventListener('keydown', onKeydown);
+				input.removeEventListener('input', onInput);
+				document.removeEventListener('pointerdown', onPointerDown, true);
+			}
+		};
+	}
+
 	// Segment drag creates a waypoint, then drags it
 	function handleSegmentPointerDown(event: PointerEvent, segmentIndex: number) {
 		event.stopPropagation();
@@ -341,9 +416,11 @@
 	}
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <g
 	class:highlighted={highlightColor !== undefined}
 	style={highlightColor !== undefined ? `--highlight-color: ${highlightColor}` : undefined}
+	ondblclick={handleEdgeDoubleClick}
 >
 	<BaseEdge {id} {path} {style} />
 
@@ -386,7 +463,29 @@
 			class:highlighted={highlightColor !== undefined}
 		/>
 	</g>
+
+	{#if label && !isEditingLabel && labelAnchor}
+		<text
+			x={labelAnchor.x}
+			y={labelAnchor.y}
+			class="edge-label"
+			class:selected
+			class:highlighted={highlightColor !== undefined}>{label}</text
+		>
+	{/if}
 </g>
+
+{#if isEditingLabel && labelAnchor}
+	<EdgeLabel x={labelAnchor.x} y={labelAnchor.y} transparent>
+		<input
+			class="edge-label-input"
+			style="--label-height: {EDGE_LABEL.height}px; --label-padding-x: {EDGE_LABEL.paddingX}px; --label-chars: {Math.max(draftLength, EDGE_LABEL.minChars)};"
+			value={label}
+			placeholder="Label"
+			use:labelEditor
+		/>
+	</EdgeLabel>
+{/if}
 
 <style>
 	.edge-arrow {
@@ -413,6 +512,51 @@
 	/* Highlight the edge path when handle is hovered */
 	.highlighted :global(.svelte-flow__edge-path) {
 		stroke: var(--highlight-color, var(--accent)) !important;
+	}
+
+	/* Connection label with a halo in the canvas color, readable on top of wires.
+	 * Pointer events pass through to the wire, so hovering the label hovers the edge. */
+	.edge-label {
+		font-family: var(--font-ui);
+		font-size: var(--font-xs);
+		fill: var(--text-muted);
+		stroke: var(--surface);
+		stroke-width: 3px;
+		stroke-linejoin: round;
+		paint-order: stroke;
+		text-anchor: middle;
+		dominant-baseline: central;
+		pointer-events: none;
+		transition: fill 0.15s ease;
+	}
+
+	:global(.svelte-flow__edge:hover) .edge-label,
+	.edge-label.selected {
+		fill: var(--accent);
+	}
+
+	.edge-label.highlighted {
+		fill: var(--highlight-color, var(--accent));
+	}
+
+	/* Inline label editor: same capsule, active like a dragged waypoint */
+	.edge-label-input {
+		box-sizing: border-box;
+		height: var(--label-height);
+		width: calc(var(--label-chars) * 1ch + 2 * var(--label-padding-x));
+		padding: 0 var(--label-padding-x);
+		border: 1.5px solid var(--accent);
+		border-radius: calc(var(--label-height) / 2);
+		background: var(--surface);
+		color: var(--text);
+		font-family: var(--font-ui);
+		font-size: var(--font-xs);
+		text-align: center;
+		outline: none;
+	}
+
+	.edge-label-input::placeholder {
+		color: var(--text-muted);
 	}
 
 	/* Waypoint group - visibility controlled by inline styles */

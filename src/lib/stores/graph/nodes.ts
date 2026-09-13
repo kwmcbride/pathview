@@ -363,7 +363,8 @@ export function duplicateSelected(): string[] {
 				sourceNodeId: newSourceId,
 				sourcePortIndex: conn.sourcePortIndex,
 				targetNodeId: newTargetId,
-				targetPortIndex: conn.targetPortIndex
+				targetPortIndex: conn.targetPortIndex,
+				...(conn.label ? { label: conn.label } : {})
 			});
 		}
 	}

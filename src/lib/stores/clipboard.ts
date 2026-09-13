@@ -340,7 +340,8 @@ async function paste(targetPosition: Position): Promise<{ nodeIds: string[]; eve
 					sourceNodeId: newSourceId,
 					sourcePortIndex: conn.sourcePortIndex,
 					targetNodeId: newTargetId,
-					targetPortIndex: conn.targetPortIndex
+					targetPortIndex: conn.targetPortIndex,
+					...(conn.label ? { label: conn.label } : {})
 				});
 			}
 		}

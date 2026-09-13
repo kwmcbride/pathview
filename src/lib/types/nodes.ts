@@ -137,6 +137,7 @@ export interface Connection {
 	targetNodeId: string;
 	targetPortIndex: number;
 	waypoints?: Waypoint[]; // Optional - empty/undefined means auto-route entire path
+	label?: string; // Optional text shown on the wire (UI-only)
 }
 
 /** Canvas annotation (markdown/LaTeX text) */
