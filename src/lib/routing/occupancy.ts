@@ -13,6 +13,10 @@ const TILE_BITS = 6;
 const TILE_SIZE = 1 << TILE_BITS;
 const TILE_MASK = TILE_SIZE - 1;
 
+/** Slots per cell: usage horizontal, usage vertical, history horizontal, history vertical */
+const SLOTS = 4;
+const HISTORY_SLOT = 2;
+
 const KEY_OFFSET = 1 << 20;
 const KEY_SPAN = 1 << 21;
 
@@ -41,35 +45,6 @@ export function collectCells(points: GridPoint[], into: Set<number>): void {
 	}
 }
 
-class TileCounts {
-	private readonly tiles = new Map<number, Uint16Array>();
-	private cachedKey = -1;
-	private cachedTile: Uint16Array | undefined = undefined;
-
-	get(gx: number, gy: number, axis: Axis): number {
-		const key = tileKey(gx >> TILE_BITS, gy >> TILE_BITS);
-		if (key !== this.cachedKey) {
-			this.cachedKey = key;
-			this.cachedTile = this.tiles.get(key);
-		}
-		const tile = this.cachedTile;
-		return tile === undefined ? 0 : tile[((((gy & TILE_MASK) << TILE_BITS) | (gx & TILE_MASK)) << 1) | axis];
-	}
-
-	add(gx: number, gy: number, axis: Axis, delta: number): void {
-		const key = tileKey(gx >> TILE_BITS, gy >> TILE_BITS);
-		let tile = this.tiles.get(key);
-		if (!tile) {
-			if (delta < 0) return;
-			tile = new Uint16Array(TILE_SIZE * TILE_SIZE * 2);
-			this.tiles.set(key, tile);
-			this.cachedKey = -1;
-		}
-		const index = ((((gy & TILE_MASK) << TILE_BITS) | (gx & TILE_MASK)) << 1) | axis;
-		tile[index] = Math.max(0, Math.min(0xffff, tile[index] + delta));
-	}
-}
-
 function decode(key: number): [number, number, Axis] {
 	const axis = (key % 2) as Axis;
 	const cell = (key - axis) / 2;
@@ -79,8 +54,9 @@ function decode(key: number): [number, number, Axis] {
 }
 
 export class Occupancy implements CongestionCosts {
-	private readonly usage = new TileCounts();
-	private readonly history = new TileCounts();
+	private readonly tiles = new Map<number, Uint16Array>();
+	private cachedKey = -1;
+	private cachedTile: Uint16Array | undefined = undefined;
 
 	/** Cost per other net using a cell on the same axis */
 	presentCost = 2;
@@ -88,26 +64,55 @@ export class Occupancy implements CongestionCosts {
 	/** Cells of the net currently being routed; they carry no congestion cost */
 	own: Set<number> | null = null;
 
+	private slotIndex(gx: number, gy: number): number {
+		return (((gy & TILE_MASK) << TILE_BITS) | (gx & TILE_MASK)) * SLOTS;
+	}
+
+	private tile(gx: number, gy: number): Uint16Array | undefined {
+		const key = tileKey(gx >> TILE_BITS, gy >> TILE_BITS);
+		if (key !== this.cachedKey) {
+			this.cachedKey = key;
+			this.cachedTile = this.tiles.get(key);
+		}
+		return this.cachedTile;
+	}
+
+	private addSlot(gx: number, gy: number, slot: number, delta: number): void {
+		let tile = this.tile(gx, gy);
+		if (!tile) {
+			if (delta < 0) return;
+			tile = new Uint16Array(TILE_SIZE * TILE_SIZE * SLOTS);
+			this.tiles.set(tileKey(gx >> TILE_BITS, gy >> TILE_BITS), tile);
+			this.cachedKey = -1;
+		}
+		const index = this.slotIndex(gx, gy) + slot;
+		tile[index] = Math.max(0, Math.min(0xffff, tile[index] + delta));
+	}
+
 	add(keys: Iterable<number>, delta: 1 | -1): void {
 		for (const key of keys) {
 			const [gx, gy, axis] = decode(key);
-			this.usage.add(gx, gy, axis, delta);
+			this.addSlot(gx, gy, axis, delta);
 		}
 	}
 
 	countKey(key: number): number {
 		const [gx, gy, axis] = decode(key);
-		return this.usage.get(gx, gy, axis);
+		const tile = this.tile(gx, gy);
+		return tile === undefined ? 0 : tile[this.slotIndex(gx, gy) + axis];
 	}
 
 	bumpHistory(key: number, amount: number): void {
 		const [gx, gy, axis] = decode(key);
-		this.history.add(gx, gy, axis, amount);
+		this.addSlot(gx, gy, HISTORY_SLOT + axis, amount);
 	}
 
 	penalty(gx: number, gy: number, axis: Axis): number {
-		const used = this.usage.get(gx, gy, axis);
-		const past = this.history.get(gx, gy, axis);
+		const tile = this.tile(gx, gy);
+		if (tile === undefined) return 0;
+		const index = this.slotIndex(gx, gy);
+		const used = tile[index + axis];
+		const past = tile[index + HISTORY_SLOT + axis];
 		if (used === 0 && past === 0) return 0;
 		if (this.own !== null && this.own.has(cellKey(gx, gy, axis))) return 0;
 		return used * this.presentCost + past;

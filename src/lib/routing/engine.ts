@@ -45,6 +45,8 @@ const NEGOTIATION_PROGRESS = 0.8;
 export interface RoutingEngineOptions {
 	/** Search with congestion costs from other nets (default true) */
 	congestion?: boolean;
+	/** A* heuristic weight, see GridSearch.heuristicWeight (default 1) */
+	heuristicWeight?: number;
 }
 
 export interface UpdateOptions {
@@ -208,9 +210,11 @@ export class RoutingEngine {
 	private readonly results = new Map<string, RouteResult>();
 	private changedSinceUpdate = false;
 	private readonly congestion: boolean;
+	private readonly heuristicWeight: number;
 
 	constructor(options: RoutingEngineOptions = {}) {
 		this.congestion = options.congestion ?? true;
+		this.heuristicWeight = options.heuristicWeight ?? 1;
 	}
 
 	/** Add or move a node together with its ports */
@@ -417,6 +421,19 @@ export class RoutingEngine {
 		}
 	}
 
+	/** True if no cell of a port ray has a passable neighbour off the ray */
+	private isEnclosed(portRay: GridPoint[], dir: number): boolean {
+		for (let i = 0; i < portRay.length; i++) {
+			const cell = portRay[i];
+			const isLast = i === portRay.length - 1;
+			for (let nd = 0; nd < 4; nd++) {
+				if (nd === OPPOSITE[dir] || (nd === dir && !isLast)) continue;
+				if (!this.map.isHard(cell.gx + DX[nd], cell.gy + DY[nd])) return false;
+			}
+		}
+		return true;
+	}
+
 	private retryFallbacks(): void {
 		for (const id of this.fallbacks) this.dirty.add(id);
 	}
@@ -485,6 +502,8 @@ export class RoutingEngine {
 		const exit = ray(start, startDir, PORT_EXIT_CELLS);
 		const entry = ray(end, targetDir, PORT_EXIT_CELLS);
 		const congestion = this.congestion ? this.occupancy : undefined;
+		// A port covered by another node is unreachable; skip the (exhaustive) search
+		const enclosed = this.isEnclosed(exit, startDir) || this.isEnclosed(entry, targetDir);
 
 		const stops = request.waypoints.map((w) => ({ gx: toGrid(w.position.x), gy: toGrid(w.position.y) }));
 		stops.push(end);
@@ -500,8 +519,11 @@ export class RoutingEngine {
 			const forced = k === 0 ? [...exit, to] : [from, to];
 			if (last) forced.push(...entry);
 
-			const path = searchGridPath(this.map, {
+			const path = enclosed
+				? null
+				: searchGridPath(this.map, {
 				congestion,
+				heuristicWeight: this.heuristicWeight,
 				start: from,
 				startDir: dir,
 				end: to,

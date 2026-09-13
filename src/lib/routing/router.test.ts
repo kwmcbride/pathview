@@ -112,6 +112,37 @@ describe('routing engine', () => {
 		expect(checkRoutes(buildScene(scenario), engine.getRoutes())).toEqual([]);
 	});
 
+	it('flags routes to covered ports and recovers when the node moves away', () => {
+		const scenario = generateScenario({ connections: 40, seed: 12 });
+		const nodesById = new Map(scenario.nodes.map((n) => [n.id, n]));
+		const engine = new RoutingEngine();
+		const place = (id: string) => {
+			const s = sceneNode(nodesById.get(id)!);
+			engine.setNode(id, s.bounds, s.ports);
+			for (const c of scenario.connections) {
+				if (c.sourceNodeId === id || c.targetNodeId === id) engine.setRequest(sceneRequest(c, nodesById));
+			}
+		};
+		for (const node of scenario.nodes) place(node.id);
+		engine.update();
+
+		const connection = scenario.connections[0];
+		const target = nodesById.get(connection.targetNodeId)!;
+		const blocker = scenario.nodes.find((n) => n.id !== connection.sourceNodeId && n.id !== target.id)!;
+		const original = blocker.center;
+
+		// Cover the input side of the target, including the route entry cells
+		blocker.center = { x: target.center.x - target.width / 2 - 20, y: target.center.y };
+		place(blocker.id);
+		engine.update();
+		expect(engine.getRoute(connection.id)!.isFallback).toBe(true);
+
+		blocker.center = original;
+		place(blocker.id);
+		engine.update();
+		expect(checkRoutes(buildScene(scenario), engine.getRoutes())).toEqual([]);
+	});
+
 	it('reports only changes', () => {
 		const scene = buildScene(generateScenario({ connections: 50, seed: 6 }));
 		const engine = new RoutingEngine();

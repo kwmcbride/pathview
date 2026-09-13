@@ -22,6 +22,12 @@ const WINDOW_PADDINGS = [16, 64];
 /** Upper bound for states of one search (caps memory at about 50 MB) */
 const MAX_STATES = 4_000_000;
 
+/** Upper bound for expanded states of one search window (caps time for unreachable ends) */
+const MAX_EXPANSIONS = 250_000;
+
+/** Counters for benchmarks and profiling */
+export const searchStats = { searches: 0, expanded: 0 };
+
 /** Extra step costs from other routes (negotiated congestion) */
 export interface CongestionCosts {
 	penalty(gx: number, gy: number, axis: 0 | 1): number;
@@ -30,6 +36,8 @@ export interface CongestionCosts {
 export interface GridSearch {
 	/** Optional congestion costs added per step */
 	congestion?: CongestionCosts;
+	/** Heuristic weight; above 1 trades bounded path cost for fewer expanded states (default 1) */
+	heuristicWeight?: number;
 	start: GridPoint;
 	startDir: number;
 	end: GridPoint;
@@ -149,6 +157,7 @@ function searchWindow(map: ObstacleMap, request: GridSearch, win: GridRect): Gri
 	const states = w * h * 4;
 	if (states > MAX_STATES) return null;
 	ensureCapacity(states);
+	searchStats.searches++;
 
 	generation++;
 	if (generation >= 0x7fffffff) {
@@ -160,6 +169,7 @@ function searchWindow(map: ObstacleMap, request: GridSearch, win: GridRect): Gri
 	heapSize = 0;
 
 	const { start, end, endDir, forced, congestion } = request;
+	const weight = request.heuristicWeight ?? 1;
 	const x0 = win.minGx;
 	const y0 = win.minGy;
 
@@ -175,12 +185,15 @@ function searchWindow(map: ObstacleMap, request: GridSearch, win: GridRect): Gri
 	parent[startState] = -1;
 	stamp[startState] = seen;
 	const h0 = Math.abs(end.gx - start.gx) + Math.abs(end.gy - start.gy);
-	heapPush(startState, h0 * 65536 + h0);
+	heapPush(startState, weight * h0 * 65536 + h0);
 
+	let expanded = 0;
 	while (heapSize > 0) {
 		const s = heapPop();
 		if (stamp[s] === closed) continue;
 		stamp[s] = closed;
+		searchStats.expanded++;
+		if (++expanded > MAX_EXPANSIONS) return null;
 
 		const d = s & 3;
 		const cell = s >> 2;
@@ -199,12 +212,11 @@ function searchWindow(map: ObstacleMap, request: GridSearch, win: GridRect): Gri
 			const ny = gy + DY[nd];
 			if (nx < win.minGx || nx > win.maxGx || ny < win.minGy || ny > win.maxGy) continue;
 
-			let cost = g + 1 + (nd === d ? 0 : TURN_COST);
-			if (!isForced(nx, ny)) {
-				const value = map.cell(nx, ny);
-				if (value & HARD_MASK) continue;
-				if (value !== 0) cost += SOFT_COST;
-			}
+			let value = map.cell(nx, ny);
+			if (value !== 0 && isForced(nx, ny)) value = 0;
+			if (value & HARD_MASK) continue;
+
+			let cost = g + 1 + (nd === d ? 0 : TURN_COST) + (value === 0 ? 0 : SOFT_COST);
 			if (congestion !== undefined) cost += congestion.penalty(nx, ny, nd <= 1 ? 0 : 1);
 			if (endDir >= 0 && nd !== endDir && nx === end.gx && ny === end.gy) cost += TURN_COST;
 
@@ -220,7 +232,7 @@ function searchWindow(map: ObstacleMap, request: GridSearch, win: GridRect): Gri
 			const dx = end.gx - nx;
 			const dy = end.gy - ny;
 			const hh = Math.abs(dx) + Math.abs(dy) + TURN_COST * minTurns(dx, dy, nd);
-			heapPush(ns, (cost + hh) * 65536 + hh);
+			heapPush(ns, (cost + weight * hh) * 65536 + hh);
 		}
 	}
 
