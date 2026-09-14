@@ -31,6 +31,7 @@ import * as nodes from './nodes';
 import * as connections from './connections';
 import * as ports from './ports';
 import * as annotations from './annotations';
+import * as buses from './buses';
 import * as subsystemEvents from './subsystemEvents';
 import * as selection from './selection';
 import * as serialization from './serialization';
@@ -93,6 +94,11 @@ export const graphStore = {
 	updateAnnotationPosition: annotations.updateAnnotationPosition,
 	removeAnnotation: annotations.removeAnnotation,
 	getAnnotation: annotations.getAnnotation,
+
+	// ==================== BUS BLOCK OPERATIONS ====================
+	setSelectedSignals: buses.setSelectedSignals,
+	setSelectorSignal: buses.setSelectorSignal,
+	setSelectorSignalsAt: buses.setSelectorSignalsAt,
 
 	// ==================== SUBSYSTEM EVENT OPERATIONS ====================
 	addSubsystemEvent: subsystemEvents.addSubsystemEvent,

@@ -36,15 +36,44 @@ export const HANDLE = {
 	hollowInset: 1.5
 } as const;
 
-/** Connection label capsule, shared by the drawn label and its inline editor */
-export const EDGE_LABEL = {
+/** Inline text input on the canvas (connection labels, bus signal names) */
+export const INLINE_INPUT = {
 	/** Capsule height in pixels */
 	height: 14,
 	/** Space between text and capsule ends in pixels */
 	paddingX: 6,
-	/** Minimum editor width in characters */
-	minChars: 5
+	/** Minimum capsule width in characters */
+	minChars: 5,
+	/** Screen distance between capsule and suggestion list in pixels */
+	listGap: 4,
+	/** Most suggestions shown at once */
+	maxSuggestions: 8
 } as const;
+
+/** Bus Creator and Bus Selector blocks, and the wires carrying buses */
+export const BUS = {
+	/** Block width across the wedge: 2 grid units */
+	blockWidth: G.x2,
+	/** How far the narrow side is set in at each end; the same at every size, so the angles never change: 1 grid unit */
+	wedgeInset: G.unit,
+	/** Corner radius of the wedge in pixels */
+	cornerRadius: 3,
+	/** Line width of a wire carrying a bus, relative to a plain connection */
+	wireScale: 2,
+	/** A bus wire starts this far inside its source port, which covers the wire end, so the thick line joins without a gap */
+	sourceInset: 4
+} as const;
+
+/**
+ * Size of a Bus Creator or Bus Selector: one port spacing per port along the
+ * wedge, at least two, and a fixed width across it. Grid-aligned like blocks.
+ */
+export function busBlockDimensions(inputCount: number, outputCount: number, rotation: number): { width: number; height: number } {
+	const length = Math.max(2, inputCount, outputCount) * NODE.portSpacing;
+	return rotation === 1 || rotation === 3
+		? { width: length, height: BUS.blockWidth }
+		: { width: BUS.blockWidth, height: length };
+}
 
 /** Event node dimensions (grid-aligned) */
 export const EVENT = {

@@ -23,6 +23,7 @@
 	import { createRecordingDataState } from '$lib/stores/recordingData.svelte';
 	import { getPortLabelConfigs } from '$lib/nodes/uiConfig';
 	import { PORT_NAME } from '$lib/constants/handles';
+	import { analyzeBuses, selectedSignals, signalPaths } from '$lib/bus/expand';
 
 	// Code preview state (declared early — referenced by subscription below)
 	let showCode = $state(false);
@@ -92,6 +93,33 @@
 
 	// Get current color for display
 	const currentColor = $derived(node?.color || DEFAULT_NODE_COLOR);
+
+	// Bus Selector: signals on the bus at its input, and the ones it picks
+	const isBusSelector = $derived(node?.type === NODE_TYPES.BUS_SELECTOR);
+	const busSignalOptions = $derived.by(() => {
+		if (!node || node.type !== NODE_TYPES.BUS_SELECTOR) return [];
+		const model = graphStore.toJSON();
+		const analysis = analyzeBuses(model.nodes, model.connections);
+		const level = analysis.levelAt(graphStore.getCurrentPath());
+		return level ? signalPaths(analysis.structureIn(level, node.id, 0)) : [];
+	});
+	const pickedSignals = $derived(node ? selectedSignals(node) : []);
+	// Picked signals the bus no longer carries stay listed until they are unpicked
+	const missingSignals = $derived(pickedSignals.filter((s) => !busSignalOptions.some((o) => o.path === s)));
+
+	function toggleSignal(path: string, picked: boolean) {
+		if (!node) return;
+		const id = node.id;
+		const chosen = new Set(pickedSignals);
+		if (picked) chosen.add(path);
+		else chosen.delete(path);
+		// Outputs keep the order of the bus
+		const ordered = [
+			...busSignalOptions.map((o) => o.path).filter((p) => chosen.has(p)),
+			...missingSignals.filter((p) => chosen.has(p))
+		];
+		historyStore.mutate(() => graphStore.setSelectedSignals(id, ordered));
+	}
 
 	// Handle color selection
 	function handleColorSelect(color: string | undefined) {
@@ -440,7 +468,33 @@
 					{/if}
 				{:else}
 					<!-- Parameters -->
-					{#if typeDef.params.length > 0}
+					{#if isBusSelector}
+						<div class="section">
+							<div class="section-title">Signals</div>
+							{#if busSignalOptions.length === 0 && missingSignals.length === 0}
+								<div class="no-params">Connect a bus to the input to pick signals</div>
+							{:else}
+								<div class="signal-list">
+									{#each busSignalOptions as option (option.path)}
+										<label class="signal-item" style="--signal-depth: {option.depth};">
+											<input
+												type="checkbox"
+												checked={pickedSignals.includes(option.path)}
+												onchange={(e) => toggleSignal(option.path, e.currentTarget.checked)}
+											/>
+											<span class:bus-signal={option.isBus}>{option.path.split('.').pop()}</span>
+										</label>
+									{/each}
+									{#each missingSignals as path (path)}
+										<label class="signal-item missing" use:tooltip={'No longer on the bus'}>
+											<input type="checkbox" checked onchange={(e) => toggleSignal(path, e.currentTarget.checked)} />
+											<span>{path}</span>
+										</label>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{:else if typeDef.params.length > 0}
 						<div class="section">
 							<div class="section-title">Parameters</div>
 							<div class="params-grid">

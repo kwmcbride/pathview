@@ -30,11 +30,13 @@
 	import { routingStore } from '$lib/stores/routing';
 	import { graphStore } from '$lib/stores/graph';
 	import { edgeHighlights } from '$lib/stores/edgeHighlight';
-	import { edgeLabelEdit, editEdgeLabel } from '$lib/stores/edgeLabelEdit.svelte';
+	import { inlineEdit, editInline } from '$lib/stores/inlineEdit.svelte';
 	import { historyStore } from '$lib/stores/history';
 	import { screenToFlow } from '$lib/utils/viewUtils';
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
-	import { EDGE_LABEL } from '$lib/constants/dimensions';
+	import InlineInput from '$lib/components/InlineInput.svelte';
+	import { BUS } from '$lib/constants/dimensions';
+	import { busWires, busCreatorWires } from '$lib/stores/busView.svelte';
 	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
@@ -60,6 +62,12 @@
 		[Position.Top]: 90,
 		[Position.Bottom]: -90
 	};
+
+	/** Arrowhead with its tip at the origin, pointing along +x */
+	const ARROW_PATH = 'M -5 -2.5 L -1 -0.5 Q 0 0 -1 0.5 L -5 2.5 Q -6 3 -6 2 L -6 -2 Q -6 -3 -5 -2.5 Z';
+
+	/** Wider arrowhead for the thicker bus wire; its base overlaps the wire end */
+	const BUS_ARROW_PATH = 'M -5.5 -3 L -1 -0.5 Q 0 0 -1 0.5 L -5.5 3 Q -6.5 3.5 -6.5 2.5 L -6.5 -2.5 Q -6.5 -3.5 -5.5 -3 Z';
 
 	/** Minimum distance of a segment midpoint handle from an existing waypoint */
 	const MIN_DISTANCE_FROM_WAYPOINT = 20;
@@ -190,7 +198,13 @@
 	}
 
 	// Path ends at the handle tips: small inset at the source, room for the arrowhead at the target
-	const adjustedSource = $derived(alongFacing(sourceX, sourceY, sourcePosition, -EDGE_SOURCE_OFFSET));
+	// Wires carrying a bus are drawn thicker
+	const carriesBus = $derived(busWires.has(id));
+
+	// A bus wire starts inside the solid bus port, so the thick line joins it without a gap
+	const adjustedSource = $derived(
+		alongFacing(sourceX, sourceY, sourcePosition, -(carriesBus ? BUS.sourceInset : EDGE_SOURCE_OFFSET))
+	);
 	const adjustedTarget = $derived(alongFacing(targetX, targetY, targetPosition, EDGE_TARGET_OFFSET));
 
 	/**
@@ -298,76 +312,45 @@
 		return midpoints;
 	});
 
+
 	// Connection label, shown on the middle of the longest route segment
 	const label = $derived((data as { label?: string } | undefined)?.label ?? '');
-	const isEditingLabel = $derived(edgeLabelEdit.connectionId === id);
+	const isEditingLabel = $derived(inlineEdit.targetId === id);
 
-	// Editor width follows the typed text
-	let draftLength = $state(0);
-
-	const labelAnchor = $derived.by(() => {
+	// Middle of the longest route segment, where the label sits
+	const segmentAnchor = $derived.by(() => {
 		if (!label && !isEditingLabel) return null;
 		const points = displayedRoute
 			? [adjustedSource, ...displayedRoute.path, adjustedTarget]
 			: [adjustedSource, adjustedTarget];
-		let anchor = points[0];
+		let anchor = { ...points[0], vertical: false };
 		let longest = -1;
 		for (let i = 0; i < points.length - 1; i++) {
-			const length = Math.abs(points[i + 1].x - points[i].x) + Math.abs(points[i + 1].y - points[i].y);
-			if (length > longest) {
-				longest = length;
-				anchor = { x: (points[i].x + points[i + 1].x) / 2, y: (points[i].y + points[i + 1].y) / 2 };
+			const dx = Math.abs(points[i + 1].x - points[i].x);
+			const dy = Math.abs(points[i + 1].y - points[i].y);
+			if (dx + dy > longest) {
+				longest = dx + dy;
+				anchor = {
+					x: (points[i].x + points[i + 1].x) / 2,
+					y: (points[i].y + points[i + 1].y) / 2,
+					vertical: dy > dx
+				};
 			}
 		}
 		return anchor;
 	});
+	const labelAnchor = $derived(label || isEditingLabel ? segmentAnchor : null);
 
 	function handleEdgeDoubleClick(event: MouseEvent) {
 		event.stopPropagation();
-		editEdgeLabel(id);
+		editInline(id);
 	}
 
 	function commitLabel(text: string) {
-		if (edgeLabelEdit.connectionId !== id) return;
-		editEdgeLabel(null);
+		if (inlineEdit.targetId !== id) return;
+		editInline(null);
 		if (text.trim() === label) return;
 		historyStore.mutate(() => graphStore.updateConnectionLabel(id, text));
-	}
-
-	/**
-	 * Label editor input. Enter commits, Escape cancels, a pointer press outside
-	 * the input commits. Blur alone never commits, because removing the editor
-	 * also blurs the input. Keys are stopped at the input so edge keyboard
-	 * handling and app shortcuts never see them. Focus waits until the input
-	 * sits in the label layer.
-	 */
-	function labelEditor(input: HTMLInputElement) {
-		const onKeydown = (event: KeyboardEvent) => {
-			event.stopPropagation();
-			if (event.key === 'Enter') commitLabel(input.value);
-			else if (event.key === 'Escape') editEdgeLabel(null);
-		};
-		const onPointerDown = (event: PointerEvent) => {
-			if (event.target !== input) commitLabel(input.value);
-		};
-		const onInput = () => {
-			draftLength = input.value.length;
-		};
-		draftLength = input.value.length;
-		input.addEventListener('keydown', onKeydown);
-		input.addEventListener('input', onInput);
-		document.addEventListener('pointerdown', onPointerDown, true);
-		requestAnimationFrame(() => {
-			input.focus();
-			input.select();
-		});
-		return {
-			destroy: () => {
-				input.removeEventListener('keydown', onKeydown);
-				input.removeEventListener('input', onInput);
-				document.removeEventListener('pointerdown', onPointerDown, true);
-			}
-		};
 	}
 
 	// Segment drag creates a waypoint, then drags it
@@ -419,7 +402,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <g
 	class:highlighted={highlightColor !== undefined}
-	style={highlightColor !== undefined ? `--highlight-color: ${highlightColor}` : undefined}
+	class:bus-wire={carriesBus}
+	style="{carriesBus ? `--wire-scale: ${BUS.wireScale};` : ''}{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
 	ondblclick={handleEdgeDoubleClick}
 >
 	<BaseEdge {id} {path} {style} />
@@ -457,17 +441,19 @@
 	<!-- Arrow at the end - offset forward 5px to reach target handle tip -->
 	<g transform="translate({endArrow.x}, {endArrow.y}) rotate({endArrow.angle}) translate(5, 0)">
 		<path
-			d="M -5 -2.5 L -1 -0.5 Q 0 0 -1 0.5 L -5 2.5 Q -6 3 -6 2 L -6 -2 Q -6 -3 -5 -2.5 Z"
+			d={carriesBus ? BUS_ARROW_PATH : ARROW_PATH}
 			class="edge-arrow"
 			class:selected
 			class:highlighted={highlightColor !== undefined}
 		/>
 	</g>
 
-	{#if label && !isEditingLabel && labelAnchor}
+	<!-- Labels on vertical segments read bottom to top along the wire; a wire into a Bus Creator shows its label at the creator port -->
+	{#if label && !isEditingLabel && labelAnchor && !busCreatorWires.has(id)}
 		<text
 			x={labelAnchor.x}
 			y={labelAnchor.y}
+			transform={labelAnchor.vertical ? `rotate(-90 ${labelAnchor.x} ${labelAnchor.y})` : undefined}
 			class="edge-label"
 			class:selected
 			class:highlighted={highlightColor !== undefined}>{label}</text
@@ -477,13 +463,7 @@
 
 {#if isEditingLabel && labelAnchor}
 	<EdgeLabel x={labelAnchor.x} y={labelAnchor.y} transparent>
-		<input
-			class="edge-label-input"
-			style="--label-height: {EDGE_LABEL.height}px; --label-padding-x: {EDGE_LABEL.paddingX}px; --label-chars: {Math.max(draftLength, EDGE_LABEL.minChars)};"
-			value={label}
-			placeholder="Label"
-			use:labelEditor
-		/>
+		<InlineInput value={label} placeholder="Label" onCommit={commitLabel} onCancel={() => editInline(null)} />
 	</EdgeLabel>
 {/if}
 
@@ -537,26 +517,6 @@
 
 	.edge-label.highlighted {
 		fill: var(--highlight-color, var(--accent));
-	}
-
-	/* Inline label editor: same capsule, active like a dragged waypoint */
-	.edge-label-input {
-		box-sizing: border-box;
-		height: var(--label-height);
-		width: calc(var(--label-chars) * 1ch + 2 * var(--label-padding-x));
-		padding: 0 var(--label-padding-x);
-		border: 1.5px solid var(--accent);
-		border-radius: calc(var(--label-height) / 2);
-		background: var(--surface);
-		color: var(--text);
-		font-family: var(--font-ui);
-		font-size: var(--font-xs);
-		text-align: center;
-		outline: none;
-	}
-
-	.edge-label-input::placeholder {
-		color: var(--text-muted);
 	}
 
 	/* Waypoint group - visibility controlled by inline styles */

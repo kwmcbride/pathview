@@ -603,6 +603,33 @@ input[type="checkbox"]:focus-visible {
 	padding: var(--space-md);
 }
 
+/* Bus Selector signal list; nested bus elements are indented by depth */
+.properties-dialog .signal-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-xs);
+}
+
+.properties-dialog .signal-item {
+	display: flex;
+	align-items: center;
+	gap: var(--space-sm);
+	padding-left: calc(var(--signal-depth, 0) * var(--space-lg));
+	font-size: 12px;
+	font-family: var(--font-mono);
+	color: var(--text);
+	cursor: pointer;
+}
+
+.properties-dialog .signal-item .bus-signal {
+	color: var(--text-muted);
+}
+
+.properties-dialog .signal-item.missing {
+	color: var(--text-disabled);
+	text-decoration: line-through;
+}
+
 .properties-dialog .dialog-footer {
 	padding: var(--space-sm) var(--space-md);
 	background: var(--surface-raised);

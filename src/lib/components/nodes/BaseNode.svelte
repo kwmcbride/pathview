@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { Handle, Position, useUpdateNodeInternals } from '@xyflow/svelte';
+	import { useUpdateNodeInternals } from '@xyflow/svelte';
 	import { nodeRegistry, registryVersion, type NodeInstance } from '$lib/nodes';
 	import { getShapeCssClass, isSubsystem } from '$lib/nodes/shapes/index';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
@@ -12,15 +12,15 @@
 	import { iconModeStore } from '$lib/stores/iconMode';
 	import BlockIcon, { hasBlockIcon } from '$lib/components/icons/BlockIcon.svelte';
 	import { PREVIEW_GAP, previewSideForRotation } from '$lib/utils/previewBounds';
-	import { hoveredHandle, selectedNodeHighlight } from '$lib/stores/hoveredHandle';
-	import { showTooltip, hideTooltip } from '$lib/components/Tooltip.svelte';
+	import { selectedNodeHighlight } from '$lib/stores/hoveredHandle';
 	import { paramInput } from '$lib/actions/paramInput';
 	import { plotDataStore } from '$lib/plotting/processing/plotDataStore';
-	import { getPortPositionCalc, calculateNodeDimensions } from '$lib/constants/dimensions';
-	import { truncatePortLabel } from '$lib/utils/portLabels';
+	import { calculateNodeDimensions } from '$lib/constants/dimensions';
 	import { containsMath, renderInlineMath, renderInlineMathSync, measureRenderedMath } from '$lib/utils/inlineMathRenderer';
 	import { getKatexCssUrl } from '$lib/utils/katexLoader';
 	import PlotPreview from './PlotPreview.svelte';
+	import NodePorts from './NodePorts.svelte';
+	import { busPorts } from '$lib/stores/busView.svelte';
 
 	interface Props {
 		id: string;
@@ -96,10 +96,6 @@
 	// Effective visibility settings (per-node overrides global)
 	const showInputLabels = $derived(nodeShowInputLabels ?? globalShowPortLabels);
 	const showOutputLabels = $derived(nodeShowOutputLabels ?? globalShowPortLabels);
-
-	// Actual visibility: setting is ON and ports exist (single source of truth)
-	const hasVisibleInputLabels = $derived(showInputLabels && data.inputs.length > 0);
-	const hasVisibleOutputLabels = $derived(showOutputLabels && data.outputs.length > 0);
 
 
 	// Re-measure node when port labels toggle changes
@@ -197,29 +193,6 @@
 	// Rotation state (0, 1, 2, 3 = 0°, 90°, 180°, 270°) - stored in node params
 	const rotation = $derived((data.params?.['_rotation'] as number) || 0);
 
-	// Calculate actual port positions based on rotation
-	// 0: inputs left, outputs right (default)
-	// 1: inputs top, outputs bottom
-	// 2: inputs right, outputs left
-	// 3: inputs bottom, outputs top
-	const inputPosition = $derived(() => {
-		switch (rotation) {
-			case 1: return Position.Top;
-			case 2: return Position.Right;
-			case 3: return Position.Bottom;
-			default: return Position.Left;
-		}
-	});
-
-	const outputPosition = $derived(() => {
-		switch (rotation) {
-			case 1: return Position.Bottom;
-			case 2: return Position.Left;
-			case 3: return Position.Top;
-			default: return Position.Right;
-		}
-	});
-
 	// Port is horizontal (left/right) or vertical (top/bottom)
 	const isVertical = $derived(rotation === 1 || rotation === 3);
 
@@ -250,46 +223,6 @@
 		showIcon
 	));
 
-	/** Inline style for a port label, positioning it outside the block edge
-	 *  next to its handle. The handle/wire is always *below* the label from
-	 *  the label's perspective — i.e. the anchor point sits at the label's
-	 *  bottom-left or bottom-right corner.
-	 *
-	 *  Horizontal block: text horizontal, label sits just above the wire stub.
-	 *  Vertical block: `writing-mode: sideways-{lr|rl}` rotates the text
-	 *    parallel to the wire (no transform tricks needed for positioning,
-	 *    so the perpendicular offset works in screen-space directly). Top
-	 *    edge reads bottom-to-top, bottom edge top-to-bottom — both read
-	 *    *outward* from the block. */
-	function portLabelStyle(isInput: boolean, portIndex: number, total: number): string {
-		const pos = getPortPositionCalc(portIndex, total);
-		const GAP = 10; // distance from block edge along the wire
-		const PERP = 5; // perpendicular offset off the wire path
-
-		// Map (rotation, isInput) → which block edge hosts the port.
-		let edge: 'left' | 'right' | 'top' | 'bottom';
-		if (rotation === 0) edge = isInput ? 'left' : 'right';
-		else if (rotation === 2) edge = isInput ? 'right' : 'left';
-		else if (rotation === 1) edge = isInput ? 'top' : 'bottom';
-		else edge = isInput ? 'bottom' : 'top';
-
-		switch (edge) {
-			case 'left':
-				// Anchor (port) at label bottom-right.
-				return `right: 100%; margin-right: ${GAP}px; top: ${pos}; transform: translateY(calc(-100% - ${PERP}px)); text-align: right;`;
-			case 'right':
-				// Anchor at label bottom-left.
-				return `left: 100%; margin-left: ${GAP}px; top: ${pos}; transform: translateY(calc(-100% - ${PERP}px)); text-align: left;`;
-			case 'top':
-				// Reads bottom-to-top, label LEFT of wire. Anchor at bottom-right.
-				return `bottom: 100%; margin-bottom: ${GAP}px; left: ${pos}; writing-mode: sideways-lr; transform: translateX(calc(-100% - ${PERP}px)); text-align: end;`;
-			case 'bottom':
-				// Reads top-to-bottom, label RIGHT of wire. Anchor at top-left
-				// (= label's bottom-left if you tilt your head left to read).
-				return `top: 100%; margin-top: ${GAP}px; left: ${pos}; writing-mode: sideways-rl; transform: translateX(${PERP}px); text-align: start;`;
-		}
-	}
-
 	// Check if this is a Subsystem or Interface node (using shapes utility)
 	const isSubsystemNode = $derived(isSubsystem(data));
 	const isInterfaceNode = $derived(data.type === NODE_TYPES.INTERFACE);
@@ -306,37 +239,9 @@
 		}
 	}
 
-	// Add input port
-	function handleAddInput(event: MouseEvent) {
-		event.stopPropagation();
-		historyStore.mutate(() => graphStore.addInputPort(id));
-	}
-
 	// Get min ports from type definition
 	const minInputs = $derived(typeDef?.ports.minInputs ?? 1);
 	const minOutputs = $derived(typeDef?.ports.minOutputs ?? 1);
-
-	// Remove input port (respects minInputs)
-	function handleRemoveInput(event: MouseEvent) {
-		event.stopPropagation();
-		if (data.inputs.length > minInputs) {
-			historyStore.mutate(() => graphStore.removeInputPort(id));
-		}
-	}
-
-	// Add output port
-	function handleAddOutput(event: MouseEvent) {
-		event.stopPropagation();
-		historyStore.mutate(() => graphStore.addOutputPort(id));
-	}
-
-	// Remove output port (respects minOutputs)
-	function handleRemoveOutput(event: MouseEvent) {
-		event.stopPropagation();
-		if (data.outputs.length > minOutputs) {
-			historyStore.mutate(() => graphStore.removeOutputPort(id));
-		}
-	}
 
 	// Get shape class from unified shapes utility
 	const shapeClass = $derived(() => typeDef ? getShapeCssClass(typeDef) : 'shape-default');
@@ -367,54 +272,6 @@
 		if (value === null || value === undefined) return 'None';
 		if (typeof value === 'object') return JSON.stringify(value);
 		return String(value);
-	}
-
-	// Tooltip position for input handles (show tooltip away from node)
-	function getInputTooltipPosition(): 'bottom' | 'left' | 'right' | 'top' {
-		switch (rotation) {
-			case 1: return 'top';    // inputs on top → tooltip above
-			case 2: return 'right';  // inputs on right → tooltip to right
-			case 3: return 'bottom'; // inputs on bottom → tooltip below
-			default: return 'left';  // inputs on left → tooltip to left
-		}
-	}
-
-	// Tooltip position for output handles (show tooltip away from node)
-	function getOutputTooltipPosition(): 'bottom' | 'left' | 'right' | 'top' {
-		switch (rotation) {
-			case 1: return 'bottom'; // outputs on bottom → tooltip below
-			case 2: return 'left';   // outputs on left → tooltip to left
-			case 3: return 'top';    // outputs on top → tooltip above
-			default: return 'right'; // outputs on right → tooltip to right
-		}
-	}
-
-	// Handle mouse events for input handles. The hover tooltip is suppressed
-	// when port labels are already shown — the label IS the name, no point
-	// also popping a tooltip on top of it.
-	function handleInputMouseEnter(event: MouseEvent, port: { id: string; name: string }) {
-		hoveredHandle.set({ nodeId: id, handleId: port.id, color: nodeColor });
-		if (!hasVisibleInputLabels) {
-			showTooltip(port.name, event.currentTarget as HTMLElement, getInputTooltipPosition());
-		}
-	}
-
-	function handleInputMouseLeave(_port: { id: string }) {
-		hoveredHandle.set(null);
-		hideTooltip();
-	}
-
-	// Handle mouse events for output handles
-	function handleOutputMouseEnter(event: MouseEvent, port: { id: string; name: string }) {
-		hoveredHandle.set({ nodeId: id, handleId: port.id, color: nodeColor });
-		if (!hasVisibleOutputLabels) {
-			showTooltip(port.name, event.currentTarget as HTMLElement, getOutputTooltipPosition());
-		}
-	}
-
-	function handleOutputMouseLeave(_port: { id: string }) {
-		hoveredHandle.set(null);
-		hideTooltip();
 	}
 
 	// Highlight connected edges when node is selected
@@ -510,77 +367,23 @@
 		{/if}
 	</div>
 
-	<!-- Port labels: rendered outside the block bounds so the block size
-	     stays the same whether labels are shown or not. The matching label
-	     for the currently-hovered handle picks up the node accent color. -->
-	{#if hasVisibleInputLabels}
-		{#each data.inputs as port, i}
-			<span
-				class="port-label"
-				class:hovered={$hoveredHandle?.handleId === port.id}
-				style={portLabelStyle(true, i, data.inputs.length)}
-			>
-				{truncatePortLabel(port.name)}
-			</span>
-		{/each}
-	{/if}
-	{#if hasVisibleOutputLabels}
-		{#each data.outputs as port, i}
-			<span
-				class="port-label"
-				class:hovered={$hoveredHandle?.handleId === port.id}
-				style={portLabelStyle(false, i, data.outputs.length)}
-			>
-				{truncatePortLabel(port.name)}
-			</span>
-		{/each}
-	{/if}
-
-	<!-- Port controls for dynamic inputs (only show when selected) -->
-	{#if allowsDynamicInputs && selected}
-		<div class="port-controls port-controls-input" class:port-controls-left={rotation === 0} class:port-controls-top={rotation === 1} class:port-controls-right={rotation === 2} class:port-controls-bottom={rotation === 3}>
-			<button class="port-btn" onclick={handleAddInput} ondblclick={(e) => e.stopPropagation()} title="Add input">+</button>
-			<button class="port-btn" onclick={handleRemoveInput} ondblclick={(e) => e.stopPropagation()} disabled={data.inputs.length <= minInputs} title="Remove input">-</button>
-		</div>
-	{/if}
-
-	<!-- Port controls for dynamic outputs (only show when selected, hide for syncPorts blocks) -->
-	{#if allowsDynamicOutputs && selected && !syncPorts}
-		<div class="port-controls port-controls-output" class:port-controls-right={rotation === 0} class:port-controls-bottom={rotation === 1} class:port-controls-left={rotation === 2} class:port-controls-top={rotation === 3}>
-			<button class="port-btn" onclick={handleAddOutput} ondblclick={(e) => e.stopPropagation()} title="Add output">+</button>
-			<button class="port-btn" onclick={handleRemoveOutput} ondblclick={(e) => e.stopPropagation()} disabled={data.outputs.length <= minOutputs} title="Remove output">-</button>
-		</div>
-	{/if}
-
-	<!-- Input handles -->
-	{#key `${rotation}-${data.inputs.length}`}
-		{#each data.inputs as port, i}
-			<Handle
-				type="target"
-				position={inputPosition()}
-				id={port.id}
-				style={isVertical ? `left: ${getPortPositionCalc(i, data.inputs.length)};` : `top: ${getPortPositionCalc(i, data.inputs.length)};`}
-				class="handle handle-input"
-				onmouseenter={(e) => handleInputMouseEnter(e, port)}
-				onmouseleave={() => handleInputMouseLeave(port)}
-			/>
-		{/each}
-	{/key}
-
-	<!-- Output handles -->
-	{#key `${rotation}-${data.outputs.length}`}
-		{#each data.outputs as port, i}
-			<Handle
-				type="source"
-				position={outputPosition()}
-				id={port.id}
-				style={isVertical ? `left: ${getPortPositionCalc(i, data.outputs.length)};` : `top: ${getPortPositionCalc(i, data.outputs.length)};`}
-				class="handle handle-output"
-				onmouseenter={(e) => handleOutputMouseEnter(e, port)}
-				onmouseleave={() => handleOutputMouseLeave(port)}
-			/>
-		{/each}
-	{/key}
+	<!-- Output port controls are hidden for syncPorts blocks, whose outputs follow the inputs -->
+	<NodePorts
+		{id}
+		inputs={data.inputs}
+		outputs={data.outputs}
+		{rotation}
+		{nodeColor}
+		{selected}
+		{showInputLabels}
+		{showOutputLabels}
+		dynamicInputs={allowsDynamicInputs}
+		dynamicOutputs={allowsDynamicOutputs && !syncPorts}
+		{minInputs}
+		{minOutputs}
+		busInputs={busPorts.get(id)?.inputs}
+		busOutputs={busPorts.get(id)?.outputs}
+	/>
 </div>
 
 <style>
@@ -827,69 +630,6 @@
 		color: var(--text-muted);
 	}
 
-	/* Port controls (+/- buttons) */
-	.port-controls {
-		position: absolute;
-		display: flex;
-		gap: 2px;
-		z-index: 10;
-	}
-
-	.port-controls-left {
-		left: -24px;
-		top: 50%;
-		transform: translateY(-50%);
-		flex-direction: column;
-	}
-
-	.port-controls-right {
-		right: -24px;
-		top: 50%;
-		transform: translateY(-50%);
-		flex-direction: column;
-	}
-
-	.port-controls-top {
-		top: -24px;
-		left: 50%;
-		transform: translateX(-50%);
-		flex-direction: row;
-	}
-
-	.port-controls-bottom {
-		bottom: -24px;
-		left: 50%;
-		transform: translateX(-50%);
-		flex-direction: row;
-	}
-
-	.port-btn {
-		width: 16px;
-		height: 16px;
-		padding: 0;
-		border: 1px solid var(--node-color);
-		border-radius: var(--radius-sm);
-		background: var(--surface-raised);
-		color: var(--node-color);
-		font-size: 12px;
-		font-weight: 600;
-		line-height: 1;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.port-btn:hover:not(:disabled) {
-		background: var(--node-color);
-		color: var(--surface-raised);
-	}
-
-	.port-btn:disabled {
-		opacity: 0.3;
-		cursor: not-allowed;
-	}
-
 	/* Handles - Hollow arrow/pentagon shape with rounded corners */
 	:global(.node .svelte-flow__handle) {
 		width: 10px;
@@ -1028,32 +768,5 @@
 		to {
 			opacity: 1;
 		}
-	}
-
-	/* Port labels: rendered as absolutely-positioned spans on the .node
-	 * container, sitting just outside the block edge next to their handle.
-	 * Position math (which edge, perpendicular offset, text-align) is set
-	 * inline by portLabelStyle() — only typography lives in CSS. */
-	.port-label {
-		position: absolute;
-		font-size: 8px;
-		line-height: 1;
-		color: var(--text-muted);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		max-width: 64px;
-		pointer-events: none;
-		transition: color 0.12s;
-	}
-
-	/* Highlight labels in the node accent color when either:
-	 *  - the block is selected, or
-	 *  - a port handle is hovered (only that single label).
-	 * The colour comes from --node-color set on the parent .node. */
-	.node.selected .port-label,
-	.port-label.hovered {
-		color: var(--node-color, var(--accent));
-		font-weight: 500;
 	}
 </style>

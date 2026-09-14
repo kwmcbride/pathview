@@ -20,6 +20,7 @@ import { writable } from 'svelte/store';
 import type { NodeInstance, Connection } from '$lib/nodes/types';
 import { nodeRegistry } from '$lib/nodes/registry';
 import { isSubsystem } from '$lib/nodes/shapes';
+import { isBusBlock } from '$lib/bus/expand';
 import { sanitizeName } from './codeBuilder';
 
 // --- Command types ---
@@ -143,7 +144,8 @@ export function hasPendingMutations(): boolean {
  */
 export function queueAddBlock(node: NodeInstance): void {
 	if (!isActive()) return;
-	if (isSubsystem(node)) return;
+	// Bus blocks have no pathsim counterpart; wiring through them applies on the next run
+	if (isSubsystem(node) || isBusBlock(node)) return;
 
 	const typeDef = nodeRegistry.get(node.type);
 	if (!typeDef) return;

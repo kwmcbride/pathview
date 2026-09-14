@@ -6,6 +6,7 @@
 	import { getBackendType } from '$lib/pyodide/backend';
 	import { createHoverDetail } from '$lib/actions/hoverDetail.svelte';
 	import NodePreview from '$lib/components/nodes/NodePreview.svelte';
+	import { BUS_CATEGORY } from '$lib/constants/nodeTypes';
 	import Icon from '$lib/components/icons/Icon.svelte';
 	interface Props {
 		onAddNode?: (type: string) => void;
@@ -62,9 +63,9 @@
 		}
 	}
 
-	// Built-in category order from blockConfig + Subsystem (registered separately).
+	// Built-in category order from blockConfig + buses and Subsystem (registered separately).
 	// Runtime-added categories are appended in registration order after these.
-	const builtInCategoryOrder: NodeCategory[] = [...(Object.keys(blockConfig) as NodeCategory[]), 'Subsystem'];
+	const builtInCategoryOrder: NodeCategory[] = [...(Object.keys(blockConfig) as NodeCategory[]), BUS_CATEGORY, 'Subsystem'];
 
 	// Filter nodes based on search and context. Read registryTick so the
 	// derived re-runs whenever the registry changes (toolbox install/uninstall).

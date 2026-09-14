@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { NodeTypeDefinition } from '$lib/nodes/types';
 	import { getShapeCssClass, isSubsystem } from '$lib/nodes/shapes';
-	import { calculateNodeDimensions, getPortPositionCalc } from '$lib/constants/dimensions';
+	import { busBlockDimensions, calculateNodeDimensions, getPortPositionCalc } from '$lib/constants/dimensions';
+	import { NODE_TYPES } from '$lib/constants/nodeTypes';
+	import BusWedge from '$lib/components/nodes/BusWedge.svelte';
 
 	interface Props {
 		node: NodeTypeDefinition;
@@ -14,19 +16,30 @@
 
 	const shapeClass = $derived(getShapeCssClass(node));
 	const isSubsystemType = $derived(isSubsystem(node) || node.category === 'Subsystem');
+	// Bus blocks are drawn as their wedge symbol, at canvas size
+	const isBus = $derived(node.type === NODE_TYPES.BUS_CREATOR || node.type === NODE_TYPES.BUS_SELECTOR);
 	const dimensions = $derived(
-		calculateNodeDimensions(node.name, inputCount, outputCount, 0, 0, undefined, null, false)
+		isBus
+			? busBlockDimensions(inputCount, outputCount, 0)
+			: calculateNodeDimensions(node.name, inputCount, outputCount, 0, 0, undefined, null, false)
 	);
 </script>
 
 <div
 	class="cbp-node {shapeClass}"
 	class:subsystem-type={isSubsystemType}
+	class:bus={isBus}
 	style="width: {dimensions.width}px; height: {dimensions.height}px;"
 >
-	<div class="cbp-content">
-		<span class="cbp-name">{node.name}</span>
-	</div>
+	{#if isBus}
+		<div class="cbp-wedge">
+			<BusWedge creator={node.type === NODE_TYPES.BUS_CREATOR} length={dimensions.height} />
+		</div>
+	{:else}
+		<div class="cbp-content">
+			<span class="cbp-name">{node.name}</span>
+		</div>
+	{/if}
 
 	{#each Array(inputCount) as _, i}
 		<div class="cbp-handle cbp-handle-input" style="top: {getPortPositionCalc(i, inputCount)};"></div>
@@ -69,6 +82,17 @@
 
 	.cbp-node.subsystem-type {
 		border-style: dashed;
+	}
+
+	/* No border: it would shrink the box the handles align to, while the wedge fills the whole box */
+	.cbp-node.bus {
+		background: none;
+		border: none;
+	}
+
+	.cbp-wedge {
+		position: absolute;
+		inset: 0;
 	}
 
 	.cbp-content {

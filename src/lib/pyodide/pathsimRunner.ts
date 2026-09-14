@@ -15,6 +15,7 @@ import { blockImportPaths } from '$lib/nodes/generated/blocks';
 import { ENGINE_MODULE, enginePath } from '$lib/constants/engine';
 import { generateEngineSetup } from './engineCodegen';
 import { graphStore, findParentSubsystem } from '$lib/stores/graph';
+import { expandBuses, isBusBlock } from '$lib/bus/expand';
 import {
 	runStreamingSimulation,
 	validateGraph as validateGraphBridge,
@@ -788,8 +789,9 @@ export async function runGraphStreamingSimulation(
 	events: EventInstance[] = [],
 	onUpdate?: (result: SimulationResult) => void
 ): Promise<SimulationResult | null> {
-	// Generate code without sim.run() - streaming will handle execution
-	const result = generatePythonCode(nodes, connections, settings, codeContext, true, events, false);
+	// Generate code without sim.run() - streaming will handle execution; bus blocks are wired directly
+	const model = expandBuses(nodes, connections);
+	const result = generatePythonCode(model.nodes, model.connections, settings, codeContext, true, events, false);
 	const duration = getSettingOrDefault(settings, 'duration');
 	return runStreamingSimulation(result.code, String(duration), onUpdate, result.nodeVars, result.connVars);
 }
@@ -804,7 +806,8 @@ export function exportToPython(
 	codeContext: string,
 	events: EventInstance[] = []
 ): string {
-	return generateFormattedPythonCode(nodes, connections, settings, codeContext, events);
+	const model = expandBuses(nodes, connections);
+	return generateFormattedPythonCode(model.nodes, model.connections, settings, codeContext, events);
 }
 
 /**
@@ -818,6 +821,10 @@ export function generateBlockCode(
 ): string {
 	const typeDef = nodeRegistry.get(node.type);
 	if (!typeDef) return '';
+
+	if (isBusBlock(node)) {
+		return '# Bus blocks exist only in the editor; the generated code wires their signals directly';
+	}
 
 	// Handle Interface blocks - generate parent Subsystem code instead
 	if (node.type === NODE_TYPES.INTERFACE) {
@@ -837,7 +844,9 @@ export function generateBlockCode(
 		const nodeVars = new Map<string, string>();
 		const varNames: string[] = [];
 
-		generateSubsystemCode(node, nodeVars, varNames, lines, '', { formatted: true });
+		// Buses entering from outside the subsystem are not known here; buses inside it are resolved
+		const [expanded] = expandBuses([node], []).nodes;
+		generateSubsystemCode(expanded, nodeVars, varNames, lines, '', { formatted: true });
 
 		return lines.join('\n');
 	}
@@ -878,7 +887,8 @@ function extractNodeParams(nodes: NodeInstance[]): Record<string, Record<string,
 
 	for (const node of nodes) {
 		const typeDef = nodeRegistry.get(node.type);
-		if (!typeDef) continue;
+		// Bus block params are signal names, not Python expressions
+		if (!typeDef || isBusBlock(node)) continue;
 
 		const validParamNames = new Set(typeDef.params.map((p) => p.name));
 		const nodeParams: Record<string, string> = {};

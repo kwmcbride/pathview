@@ -38,6 +38,9 @@
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { GRID_SIZE, SNAP_GRID, BACKGROUND_GAP } from '$lib/constants/grid';
 	import { createRoutingSync } from './canvas/routingSync';
+	import { isBusBlock } from '$lib/bus/expand';
+	import { updateBusView } from '$lib/stores/busView.svelte';
+	import BusBlockNode from './nodes/BusBlockNode.svelte';
 	import { createEdgeHighlighter } from '$lib/stores/edgeHighlight';
 	import { CANVAS_MIN_ZOOM } from '$lib/constants/layout';
 	import { shallowEqualArray, shallowEqualRecord } from '$lib/utils/shallowEqual';
@@ -49,6 +52,7 @@
 		toFlowEdge,
 		toEventNode,
 		toAnnotationNode,
+		isBlockFlowNode,
 		rotateSelectedNodes,
 		flipSelectedNodesHorizontal,
 		flipSelectedNodesVertical,
@@ -271,7 +275,7 @@
 
 	// Routing: the scene is diffed here and routed by the routing engine in a worker
 	const routingSync = createRoutingSync({
-		blockNodes: () => nodes.filter((n) => n.type === 'pathview'),
+		blockNodes: () => nodes.filter(isBlockFlowNode),
 		node: (id) => nodeMap.get(id),
 		connections: () => get(graphStore.connections),
 		visibleBounds
@@ -289,6 +293,7 @@
 	// Custom node types - will add more for different shapes
 	const nodeTypes: NodeTypes = {
 		pathview: BaseNode,
+		busBlock: BusBlockNode,
 		eventNode: EventNode,
 		annotation: AnnotationNode
 	};
@@ -334,7 +339,7 @@
 	$effect(() => {
 		const changed = new Set<string>();
 		for (const node of nodes) {
-			if (node.type !== 'pathview') continue;
+			if (!isBlockFlowNode(node)) continue;
 			const w = node.measured?.width;
 			const h = node.measured?.height;
 			if (w === undefined || h === undefined) continue;
@@ -512,7 +517,7 @@
 			// New node
 			return {
 				id: graphNode.id,
-				type: 'pathview',
+				type: isBusBlock(graphNode) ? 'busBlock' : 'pathview',
 				position,
 				data: graphNode,
 				// Explicit center origin for correct bounds calculation
@@ -605,6 +610,8 @@
 	function rebuildEdges(connections: Connection[]): void {
 		const visibleIds = getVisibleNodeIds();
 		const currentEdgeSelection = new Map(edges.map((e) => [e.id, e.selected]));
+		// Bus wires and bus block signal names follow the same graph changes as the edges
+		updateBusView(graphStore.toJSON(), graphStore.getCurrentPath(), connections);
 		edges = connections
 			.filter((c) => visibleIds.has(c.sourceNodeId) && visibleIds.has(c.targetNodeId))
 			.map((conn) => {
@@ -653,7 +660,7 @@
 		const moved: string[] = [];
 		for (const node of draggedNodes) {
 			// Events and annotations don't affect routing
-			if (node.type !== 'pathview') continue;
+			if (!isBlockFlowNode(node)) continue;
 
 			const snapped = {
 				x: Math.round(node.position.x / GRID_SIZE) * GRID_SIZE,
@@ -766,9 +773,7 @@
 		annotationNodes = annotationNodes.filter(n => !deletedIds.has(n.id));
 
 		// Force sync edges from store after deletion
-		const afterConnections = get(graphStore.connections);
-		edges = afterConnections.map(toFlowEdge);
-		edgeHighlighter.refresh();
+		rebuildEdges(get(graphStore.connections));
 
 		isSyncing = false;
 	}
@@ -1046,10 +1051,10 @@
 		fill: var(--grid-dot);
 	}
 
-	/* Edge styling */
+	/* Edge styling; --wire-scale thickens a wire in every state, e.g. for buses */
 	:global(.svelte-flow__edge-path) {
 		stroke: var(--edge);
-		stroke-width: 1;
+		stroke-width: calc(1px * var(--wire-scale, 1));
 		transition: stroke 0.15s ease;
 		cursor: pointer;
 	}
@@ -1063,12 +1068,12 @@
 
 	:global(.svelte-flow__edge:hover .svelte-flow__edge-path) {
 		stroke: var(--accent, #0070C0);
-		stroke-width: 1;
+		stroke-width: calc(1px * var(--wire-scale, 1));
 	}
 
 	:global(.svelte-flow__edge.selected .svelte-flow__edge-path) {
 		stroke: var(--accent, #0070C0);
-		stroke-width: 1.5;
+		stroke-width: calc(1.5px * var(--wire-scale, 1));
 	}
 
 	/* Connection line */
