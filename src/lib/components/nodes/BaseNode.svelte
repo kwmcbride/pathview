@@ -20,6 +20,7 @@
 	import { getKatexCssUrl } from '$lib/utils/katexLoader';
 	import PlotPreview from './PlotPreview.svelte';
 	import NodePorts from './NodePorts.svelte';
+	import { busPorts } from '$lib/stores/busView.svelte';
 
 	interface Props {
 		id: string;
@@ -238,37 +239,9 @@
 		}
 	}
 
-	// Add input port
-	function handleAddInput(event: MouseEvent) {
-		event.stopPropagation();
-		historyStore.mutate(() => graphStore.addInputPort(id));
-	}
-
 	// Get min ports from type definition
 	const minInputs = $derived(typeDef?.ports.minInputs ?? 1);
 	const minOutputs = $derived(typeDef?.ports.minOutputs ?? 1);
-
-	// Remove input port (respects minInputs)
-	function handleRemoveInput(event: MouseEvent) {
-		event.stopPropagation();
-		if (data.inputs.length > minInputs) {
-			historyStore.mutate(() => graphStore.removeInputPort(id));
-		}
-	}
-
-	// Add output port
-	function handleAddOutput(event: MouseEvent) {
-		event.stopPropagation();
-		historyStore.mutate(() => graphStore.addOutputPort(id));
-	}
-
-	// Remove output port (respects minOutputs)
-	function handleRemoveOutput(event: MouseEvent) {
-		event.stopPropagation();
-		if (data.outputs.length > minOutputs) {
-			historyStore.mutate(() => graphStore.removeOutputPort(id));
-		}
-	}
 
 	// Get shape class from unified shapes utility
 	const shapeClass = $derived(() => typeDef ? getShapeCssClass(typeDef) : 'shape-default');
@@ -394,30 +367,22 @@
 		{/if}
 	</div>
 
-	<!-- Port controls for dynamic inputs (only show when selected) -->
-	{#if allowsDynamicInputs && selected}
-		<div class="port-controls port-controls-input" class:port-controls-left={rotation === 0} class:port-controls-top={rotation === 1} class:port-controls-right={rotation === 2} class:port-controls-bottom={rotation === 3}>
-			<button class="port-btn" onclick={handleAddInput} ondblclick={(e) => e.stopPropagation()} title="Add input">+</button>
-			<button class="port-btn" onclick={handleRemoveInput} ondblclick={(e) => e.stopPropagation()} disabled={data.inputs.length <= minInputs} title="Remove input">-</button>
-		</div>
-	{/if}
-
-	<!-- Port controls for dynamic outputs (only show when selected, hide for syncPorts blocks) -->
-	{#if allowsDynamicOutputs && selected && !syncPorts}
-		<div class="port-controls port-controls-output" class:port-controls-right={rotation === 0} class:port-controls-bottom={rotation === 1} class:port-controls-left={rotation === 2} class:port-controls-top={rotation === 3}>
-			<button class="port-btn" onclick={handleAddOutput} ondblclick={(e) => e.stopPropagation()} title="Add output">+</button>
-			<button class="port-btn" onclick={handleRemoveOutput} ondblclick={(e) => e.stopPropagation()} disabled={data.outputs.length <= minOutputs} title="Remove output">-</button>
-		</div>
-	{/if}
-
+	<!-- Output port controls are hidden for syncPorts blocks, whose outputs follow the inputs -->
 	<NodePorts
 		{id}
 		inputs={data.inputs}
 		outputs={data.outputs}
 		{rotation}
 		{nodeColor}
+		{selected}
 		{showInputLabels}
 		{showOutputLabels}
+		dynamicInputs={allowsDynamicInputs}
+		dynamicOutputs={allowsDynamicOutputs && !syncPorts}
+		{minInputs}
+		{minOutputs}
+		busInputs={busPorts.get(id)?.inputs}
+		busOutputs={busPorts.get(id)?.outputs}
 	/>
 </div>
 
@@ -663,69 +628,6 @@
 
 	.pinned-param input::placeholder {
 		color: var(--text-muted);
-	}
-
-	/* Port controls (+/- buttons) */
-	.port-controls {
-		position: absolute;
-		display: flex;
-		gap: 2px;
-		z-index: 10;
-	}
-
-	.port-controls-left {
-		left: -24px;
-		top: 50%;
-		transform: translateY(-50%);
-		flex-direction: column;
-	}
-
-	.port-controls-right {
-		right: -24px;
-		top: 50%;
-		transform: translateY(-50%);
-		flex-direction: column;
-	}
-
-	.port-controls-top {
-		top: -24px;
-		left: 50%;
-		transform: translateX(-50%);
-		flex-direction: row;
-	}
-
-	.port-controls-bottom {
-		bottom: -24px;
-		left: 50%;
-		transform: translateX(-50%);
-		flex-direction: row;
-	}
-
-	.port-btn {
-		width: 16px;
-		height: 16px;
-		padding: 0;
-		border: 1px solid var(--node-color);
-		border-radius: var(--radius-sm);
-		background: var(--surface-raised);
-		color: var(--node-color);
-		font-size: 12px;
-		font-weight: 600;
-		line-height: 1;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.port-btn:hover:not(:disabled) {
-		background: var(--node-color);
-		color: var(--surface-raised);
-	}
-
-	.port-btn:disabled {
-		opacity: 0.3;
-		cursor: not-allowed;
 	}
 
 	/* Handles - Hollow arrow/pentagon shape with rounded corners */

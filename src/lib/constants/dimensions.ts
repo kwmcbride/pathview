@@ -59,9 +59,7 @@ export const BUS = {
 	/** Line width of a wire carrying a bus in pixels */
 	wireWidth: 4,
 	/** Distance of the signal count from the wire in pixels */
-	countOffset: 8,
-	/** Arrowhead scale on wires carrying a bus */
-	arrowScale: 1.4
+	countOffset: 8
 } as const;
 
 /**

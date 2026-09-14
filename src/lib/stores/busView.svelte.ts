@@ -17,6 +17,9 @@ export const busWireSignals = new SvelteMap<string, number>();
 /** Bus Creator ID to the signal name of each of its inputs */
 export const busCreatorSignals = new SvelteMap<string, string[]>();
 
+/** Node ID to the indices of its ports that carry a bus; absent when none does */
+export const busPorts = new SvelteMap<string, { inputs: number[]; outputs: number[] }>();
+
 function sync<T>(target: SvelteMap<string, T>, next: Map<string, T>, same: (a: T, b: T) => boolean): void {
 	for (const key of [...target.keys()]) {
 		if (!next.has(key)) target.delete(key);
@@ -28,6 +31,7 @@ function sync<T>(target: SvelteMap<string, T>, next: Map<string, T>, same: (a: T
 }
 
 const sameNames = (a: string[], b: string[]) => a.length === b.length && a.every((name, i) => name === b[i]);
+const sameIndices = (a: number[], b: number[]) => a.length === b.length && a.every((index, i) => index === b[i]);
 
 /**
  * Recompute the bus view for the connections of the graph level at `path`
@@ -40,6 +44,7 @@ export function updateBusView(
 ): void {
 	const wires = new Map<string, number>();
 	const creators = new Map<string, string[]>();
+	const ports = new Map<string, { inputs: number[]; outputs: number[] }>();
 
 	if (containsBusBlocks(model.nodes)) {
 		const analysis = analyzeBuses(model.nodes, model.connections);
@@ -51,10 +56,14 @@ export function updateBusView(
 			}
 			for (const node of level.nodeList) {
 				if (node.type === NODE_TYPES.BUS_CREATOR) creators.set(node.id, analysis.elementNames(level, node));
+				const inputs = node.inputs.flatMap((_, i) => (analysis.structureIn(level, node.id, i) ? [i] : []));
+				const outputs = node.outputs.flatMap((_, i) => (analysis.structureOut(level, node.id, i) ? [i] : []));
+				if (inputs.length > 0 || outputs.length > 0) ports.set(node.id, { inputs, outputs });
 			}
 		}
 	}
 
 	sync(busWireSignals, wires, (a, b) => a === b);
 	sync(busCreatorSignals, creators, sameNames);
+	sync(busPorts, ports, (a, b) => sameIndices(a.inputs, b.inputs) && sameIndices(a.outputs, b.outputs));
 }

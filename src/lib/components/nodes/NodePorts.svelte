@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
 	import type { PortInstance } from '$lib/nodes/types';
+	import { graphStore } from '$lib/stores/graph';
+	import { historyStore } from '$lib/stores/history';
 	import { hoveredHandle } from '$lib/stores/hoveredHandle';
 	import { showTooltip, hideTooltip } from '$lib/components/Tooltip.svelte';
 	import { getPortPositionCalc } from '$lib/constants/dimensions';
 	import { truncatePortLabel } from '$lib/utils/portLabels';
 
 	/**
-	 * Port handles and port labels of a block node. Sits inside the node element,
-	 * whose edges the handles and labels are positioned against.
+	 * Ports of a block node: handles, port labels and the +/- controls for blocks
+	 * with a variable port count. Sits inside the node element, whose edges
+	 * everything is positioned against.
 	 */
 	interface Props {
 		id: string;
@@ -16,19 +19,49 @@
 		outputs: PortInstance[];
 		rotation: number;
 		nodeColor: string;
+		selected: boolean;
 		showInputLabels: boolean;
 		showOutputLabels: boolean;
+		/** Inputs and outputs can be added and removed while the block is selected */
+		dynamicInputs?: boolean;
+		dynamicOutputs?: boolean;
+		minInputs?: number;
+		minOutputs?: number;
 		/** Names shown for the inputs instead of the port names, e.g. derived signal names */
 		inputNames?: string[];
+		/** Indices of ports carrying a bus, drawn with the bus handle */
+		busInputs?: number[];
+		busOutputs?: number[];
 	}
 
-	let { id, inputs, outputs, rotation, nodeColor, showInputLabels, showOutputLabels, inputNames }: Props = $props();
+	let {
+		id,
+		inputs,
+		outputs,
+		rotation,
+		nodeColor,
+		selected,
+		showInputLabels,
+		showOutputLabels,
+		dynamicInputs = false,
+		dynamicOutputs = false,
+		minInputs = 1,
+		minOutputs = 1,
+		inputNames,
+		busInputs,
+		busOutputs
+	}: Props = $props();
 
 	// Actual visibility: setting is ON and ports exist (single source of truth)
 	const hasVisibleInputLabels = $derived(showInputLabels && inputs.length > 0);
 	const hasVisibleOutputLabels = $derived(showOutputLabels && outputs.length > 0);
 
 	const inputName = (port: PortInstance, index: number) => inputNames?.[index] ?? port.name;
+
+	const handleClass = (direction: 'input' | 'output', index: number) => {
+		const bus = (direction === 'input' ? busInputs : busOutputs)?.includes(index);
+		return `handle handle-${direction}${bus ? ' handle-bus' : ''}`;
+	};
 
 	// Calculate actual port positions based on rotation
 	// 0: inputs left, outputs right (default)
@@ -138,6 +171,12 @@
 		hoveredHandle.set(null);
 		hideTooltip();
 	}
+
+	// Port count controls; removal respects the minimum port count
+	function changePorts(event: MouseEvent, change: () => void) {
+		event.stopPropagation();
+		historyStore.mutate(change);
+	}
 </script>
 
 <!-- Port labels: rendered outside the block bounds so the block size
@@ -166,6 +205,22 @@
 	{/each}
 {/if}
 
+<!-- Port controls for dynamic inputs (only show when selected) -->
+{#if dynamicInputs && selected}
+	<div class="port-controls" class:port-controls-left={rotation === 0} class:port-controls-top={rotation === 1} class:port-controls-right={rotation === 2} class:port-controls-bottom={rotation === 3}>
+		<button class="port-btn" onclick={(e) => changePorts(e, () => graphStore.addInputPort(id))} ondblclick={(e) => e.stopPropagation()} title="Add input">+</button>
+		<button class="port-btn" onclick={(e) => changePorts(e, () => graphStore.removeInputPort(id))} ondblclick={(e) => e.stopPropagation()} disabled={inputs.length <= minInputs} title="Remove input">-</button>
+	</div>
+{/if}
+
+<!-- Port controls for dynamic outputs (only show when selected) -->
+{#if dynamicOutputs && selected}
+	<div class="port-controls" class:port-controls-right={rotation === 0} class:port-controls-bottom={rotation === 1} class:port-controls-left={rotation === 2} class:port-controls-top={rotation === 3}>
+		<button class="port-btn" onclick={(e) => changePorts(e, () => graphStore.addOutputPort(id))} ondblclick={(e) => e.stopPropagation()} title="Add output">+</button>
+		<button class="port-btn" onclick={(e) => changePorts(e, () => graphStore.removeOutputPort(id))} ondblclick={(e) => e.stopPropagation()} disabled={outputs.length <= minOutputs} title="Remove output">-</button>
+	</div>
+{/if}
+
 <!-- Input handles -->
 {#key `${rotation}-${inputs.length}`}
 	{#each inputs as port, i}
@@ -174,7 +229,7 @@
 			position={inputPosition}
 			id={port.id}
 			style={isVertical ? `left: ${getPortPositionCalc(i, inputs.length)};` : `top: ${getPortPositionCalc(i, inputs.length)};`}
-			class="handle handle-input"
+			class={handleClass('input', i)}
 			onmouseenter={(e) => handleInputMouseEnter(e, inputName(port, i), port.id)}
 			onmouseleave={handleMouseLeave}
 		/>
@@ -189,7 +244,7 @@
 			position={outputPosition}
 			id={port.id}
 			style={isVertical ? `left: ${getPortPositionCalc(i, outputs.length)};` : `top: ${getPortPositionCalc(i, outputs.length)};`}
-			class="handle handle-output"
+			class={handleClass('output', i)}
 			onmouseenter={(e) => handleOutputMouseEnter(e, port.name, port.id)}
 			onmouseleave={handleMouseLeave}
 		/>
@@ -222,5 +277,101 @@
 	.port-label.hovered {
 		color: var(--node-color, var(--accent));
 		font-weight: 500;
+	}
+
+	/* Port controls (+/- buttons) */
+	.port-controls {
+		position: absolute;
+		display: flex;
+		gap: 2px;
+		z-index: 10;
+	}
+
+	.port-controls-left {
+		left: -24px;
+		top: 50%;
+		transform: translateY(-50%);
+		flex-direction: column;
+	}
+
+	.port-controls-right {
+		right: -24px;
+		top: 50%;
+		transform: translateY(-50%);
+		flex-direction: column;
+	}
+
+	.port-controls-top {
+		top: -24px;
+		left: 50%;
+		transform: translateX(-50%);
+		flex-direction: row;
+	}
+
+	.port-controls-bottom {
+		bottom: -24px;
+		left: 50%;
+		transform: translateX(-50%);
+		flex-direction: row;
+	}
+
+	.port-btn {
+		width: 16px;
+		height: 16px;
+		padding: 0;
+		border: 1px solid var(--node-color);
+		border-radius: var(--radius-sm);
+		background: var(--surface-raised);
+		color: var(--node-color);
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 1;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.port-btn:hover:not(:disabled) {
+		background: var(--node-color);
+		color: var(--surface-raised);
+	}
+
+	.port-btn:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
+
+	/* Ports carrying a bus: a solid arrow, wider across the wire, matching the
+	 * thicker bus wire. Same length along the wire as a normal handle, so wires
+	 * and routing attach at the same point. */
+	:global(.node .svelte-flow__handle.handle-bus) {
+		height: 12px;
+	}
+
+	:global(.node[data-rotation="1"] .svelte-flow__handle.handle-bus),
+	:global(.node[data-rotation="3"] .svelte-flow__handle.handle-bus) {
+		width: 12px;
+		height: 10px;
+	}
+
+	:global(.node .svelte-flow__handle.handle-bus::after) {
+		display: none;
+	}
+
+	:global(.node[data-rotation="0"] .svelte-flow__handle.handle-bus::before) {
+		clip-path: path('M 1 0 L 5 0 Q 6 0 6.7 0.7 L 9.3 5.3 Q 10 6 9.3 6.7 L 6.7 11.3 Q 6 12 5 12 L 1 12 Q 0 12 0 11 L 0 1 Q 0 0 1 0 Z');
+	}
+
+	:global(.node[data-rotation="1"] .svelte-flow__handle.handle-bus::before) {
+		clip-path: path('M 0 1 L 0 5 Q 0 6 0.7 6.7 L 5.3 9.3 Q 6 10 6.7 9.3 L 11.3 6.7 Q 12 6 12 5 L 12 1 Q 12 0 11 0 L 1 0 Q 0 0 0 1 Z');
+	}
+
+	:global(.node[data-rotation="2"] .svelte-flow__handle.handle-bus::before) {
+		clip-path: path('M 9 0 L 5 0 Q 4 0 3.3 0.7 L 0.7 5.3 Q 0 6 0.7 6.7 L 3.3 11.3 Q 4 12 5 12 L 9 12 Q 10 12 10 11 L 10 1 Q 10 0 9 0 Z');
+	}
+
+	:global(.node[data-rotation="3"] .svelte-flow__handle.handle-bus::before) {
+		clip-path: path('M 0 9 L 0 5 Q 0 4 0.7 3.3 L 5.3 0.7 Q 6 0 6.7 0.7 L 11.3 3.3 Q 12 4 12 5 L 12 9 Q 12 10 11 10 L 1 10 Q 0 10 0 9 Z');
 	}
 </style>

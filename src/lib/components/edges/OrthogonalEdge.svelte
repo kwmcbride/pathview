@@ -63,6 +63,12 @@
 		[Position.Bottom]: -90
 	};
 
+	/** Arrowhead with its tip at the origin, pointing along +x */
+	const ARROW_PATH = 'M -5 -2.5 L -1 -0.5 Q 0 0 -1 0.5 L -5 2.5 Q -6 3 -6 2 L -6 -2 Q -6 -3 -5 -2.5 Z';
+
+	/** Wider arrowhead for the thicker bus wire; its base overlaps the wire end */
+	const BUS_ARROW_PATH = 'M -8 -5 L -1 -0.8 Q 0 0 -1 0.8 L -8 5 Q -9 5.5 -9 4.5 L -9 -4.5 Q -9 -5.5 -8 -5 Z';
+
 	/** Minimum distance of a segment midpoint handle from an existing waypoint */
 	const MIN_DISTANCE_FROM_WAYPOINT = 20;
 
@@ -429,9 +435,9 @@
 	</g>
 
 	<!-- Arrow at the end - offset forward 5px to reach target handle tip -->
-	<g transform="translate({endArrow.x}, {endArrow.y}) rotate({endArrow.angle}) translate(5, 0){busSignals !== undefined ? ` scale(${BUS.arrowScale})` : ''}">
+	<g transform="translate({endArrow.x}, {endArrow.y}) rotate({endArrow.angle}) translate(5, 0)">
 		<path
-			d="M -5 -2.5 L -1 -0.5 Q 0 0 -1 0.5 L -5 2.5 Q -6 3 -6 2 L -6 -2 Q -6 -3 -5 -2.5 Z"
+			d={busSignals !== undefined ? BUS_ARROW_PATH : ARROW_PATH}
 			class="edge-arrow"
 			class:selected
 			class:highlighted={highlightColor !== undefined}

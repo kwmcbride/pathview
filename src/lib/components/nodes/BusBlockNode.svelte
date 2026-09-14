@@ -93,15 +93,21 @@
 		</g>
 	</svg>
 
+	<!-- The narrow side is always the bus port; a creator takes more inputs, a selector's outputs follow its signals -->
 	<NodePorts
 		{id}
 		inputs={data.inputs}
 		outputs={data.outputs}
 		{rotation}
 		{nodeColor}
+		{selected}
 		showInputLabels={isCreator}
 		showOutputLabels={!isCreator}
+		dynamicInputs={isCreator}
+		minInputs={1}
 		inputNames={isCreator ? busCreatorSignals.get(id) : undefined}
+		busInputs={isCreator ? undefined : [0]}
+		busOutputs={isCreator ? [0] : undefined}
 	/>
 </div>
 
