@@ -50,11 +50,30 @@ export const INLINE_INPUT = {
 	maxSuggestions: 8
 } as const;
 
-/** Wire carrying a bus */
-export const BUS_WIRE = {
-	/** Line width in pixels */
-	strokeWidth: 3
+/** Bus Creator and Bus Selector blocks, and the wires carrying buses */
+export const BUS = {
+	/** Block width across the wedge: 2 grid units */
+	blockWidth: G.x2,
+	/** Length of the narrow wedge side where the bus attaches: 2 grid units */
+	narrowSide: G.x2,
+	/** Line width of a wire carrying a bus in pixels */
+	wireWidth: 4,
+	/** Distance of the signal count from the wire in pixels */
+	countOffset: 8,
+	/** Arrowhead scale on wires carrying a bus */
+	arrowScale: 1.4
 } as const;
+
+/**
+ * Size of a Bus Creator or Bus Selector: one port spacing per port along the
+ * wedge, at least two, and a fixed width across it. Grid-aligned like blocks.
+ */
+export function busBlockDimensions(inputCount: number, outputCount: number, rotation: number): { width: number; height: number } {
+	const length = Math.max(2, inputCount, outputCount) * NODE.portSpacing;
+	return rotation === 1 || rotation === 3
+		? { width: length, height: BUS.blockWidth }
+		: { width: BUS.blockWidth, height: length };
+}
 
 /** Event node dimensions (grid-aligned) */
 export const EVENT = {

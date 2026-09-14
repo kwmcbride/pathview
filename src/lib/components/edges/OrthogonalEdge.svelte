@@ -35,7 +35,8 @@
 	import { screenToFlow } from '$lib/utils/viewUtils';
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
 	import InlineInput from '$lib/components/InlineInput.svelte';
-	import { BUS_WIRE } from '$lib/constants/dimensions';
+	import { BUS } from '$lib/constants/dimensions';
+	import { busWireSignals } from '$lib/stores/busView.svelte';
 	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
@@ -299,29 +300,36 @@
 		return midpoints;
 	});
 
-	// Wires carrying a bus are drawn thicker
-	const carriesBus = $derived(Boolean((data as { bus?: boolean } | undefined)?.bus));
+	// Number of signals on a wire carrying a bus; such wires are drawn thicker and show the count
+	const busSignals = $derived(busWireSignals.get(id));
 
 	// Connection label, shown on the middle of the longest route segment
 	const label = $derived((data as { label?: string } | undefined)?.label ?? '');
 	const isEditingLabel = $derived(edgeLabelEdit.connectionId === id);
 
-	const labelAnchor = $derived.by(() => {
-		if (!label && !isEditingLabel) return null;
+	// Middle of the longest route segment, where the label and the bus signal count sit
+	const segmentAnchor = $derived.by(() => {
+		if (!label && !isEditingLabel && busSignals === undefined) return null;
 		const points = displayedRoute
 			? [adjustedSource, ...displayedRoute.path, adjustedTarget]
 			: [adjustedSource, adjustedTarget];
-		let anchor = points[0];
+		let anchor = { ...points[0], vertical: false };
 		let longest = -1;
 		for (let i = 0; i < points.length - 1; i++) {
-			const length = Math.abs(points[i + 1].x - points[i].x) + Math.abs(points[i + 1].y - points[i].y);
-			if (length > longest) {
-				longest = length;
-				anchor = { x: (points[i].x + points[i + 1].x) / 2, y: (points[i].y + points[i + 1].y) / 2 };
+			const dx = Math.abs(points[i + 1].x - points[i].x);
+			const dy = Math.abs(points[i + 1].y - points[i].y);
+			if (dx + dy > longest) {
+				longest = dx + dy;
+				anchor = {
+					x: (points[i].x + points[i + 1].x) / 2,
+					y: (points[i].y + points[i + 1].y) / 2,
+					vertical: dy > dx
+				};
 			}
 		}
 		return anchor;
 	});
+	const labelAnchor = $derived(label || isEditingLabel ? segmentAnchor : null);
 
 	function handleEdgeDoubleClick(event: MouseEvent) {
 		event.stopPropagation();
@@ -384,8 +392,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <g
 	class:highlighted={highlightColor !== undefined}
-	class:bus-wire={carriesBus}
-	style="--bus-wire-width: {BUS_WIRE.strokeWidth}px;{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
+	class:bus-wire={busSignals !== undefined}
+	style="--bus-wire-width: {BUS.wireWidth}px;{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
 	ondblclick={handleEdgeDoubleClick}
 >
 	<BaseEdge {id} {path} {style} />
@@ -421,7 +429,7 @@
 	</g>
 
 	<!-- Arrow at the end - offset forward 5px to reach target handle tip -->
-	<g transform="translate({endArrow.x}, {endArrow.y}) rotate({endArrow.angle}) translate(5, 0)">
+	<g transform="translate({endArrow.x}, {endArrow.y}) rotate({endArrow.angle}) translate(5, 0){busSignals !== undefined ? ` scale(${BUS.arrowScale})` : ''}">
 		<path
 			d="M -5 -2.5 L -1 -0.5 Q 0 0 -1 0.5 L -5 2.5 Q -6 3 -6 2 L -6 -2 Q -6 -3 -5 -2.5 Z"
 			class="edge-arrow"
@@ -430,10 +438,24 @@
 		/>
 	</g>
 
+	<!-- Signal count beside a bus wire: above horizontal segments, left of vertical ones -->
+	{#if busSignals !== undefined && segmentAnchor}
+		<text
+			x={segmentAnchor.vertical ? segmentAnchor.x - BUS.countOffset : segmentAnchor.x}
+			y={segmentAnchor.vertical ? segmentAnchor.y : segmentAnchor.y - BUS.countOffset}
+			class="bus-count"
+			class:vertical={segmentAnchor.vertical}
+			class:selected
+			class:highlighted={highlightColor !== undefined}>{busSignals}</text
+		>
+	{/if}
+
+	<!-- Labels on vertical segments read bottom to top along the wire -->
 	{#if label && !isEditingLabel && labelAnchor}
 		<text
 			x={labelAnchor.x}
 			y={labelAnchor.y}
+			transform={labelAnchor.vertical ? `rotate(-90 ${labelAnchor.x} ${labelAnchor.y})` : undefined}
 			class="edge-label"
 			class:selected
 			class:highlighted={highlightColor !== undefined}>{label}</text
@@ -500,6 +522,34 @@
 	}
 
 	.edge-label.highlighted {
+		fill: var(--highlight-color, var(--accent));
+	}
+
+	/* Bus signal count, same halo and colors as the label */
+	.bus-count {
+		font-family: var(--font-ui);
+		font-size: var(--font-xs);
+		fill: var(--text-muted);
+		stroke: var(--surface);
+		stroke-width: 3px;
+		stroke-linejoin: round;
+		paint-order: stroke;
+		text-anchor: middle;
+		dominant-baseline: central;
+		pointer-events: none;
+		transition: fill 0.15s ease;
+	}
+
+	.bus-count.vertical {
+		text-anchor: end;
+	}
+
+	:global(.svelte-flow__edge:hover) .bus-count,
+	.bus-count.selected {
+		fill: var(--accent);
+	}
+
+	.bus-count.highlighted {
 		fill: var(--highlight-color, var(--accent));
 	}
 

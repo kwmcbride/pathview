@@ -85,7 +85,7 @@ export function elementAt(structure: BusStructure, path: string): BusElement | u
 	return current;
 }
 
-function containsBusBlocks(nodes: NodeInstance[]): boolean {
+export function containsBusBlocks(nodes: NodeInstance[]): boolean {
 	return nodes.some((n) => isBusBlock(n) || (n.graph ? containsBusBlocks(n.graph.nodes) : false));
 }
 
@@ -193,7 +193,7 @@ export function analyzeBuses(nodes: NodeInstance[], connections: Connection[]) {
 		return level;
 	}
 
-	return { root, levelAt, structureIn, structureOut };
+	return { root, levelAt, structureIn, structureOut, elementNames };
 }
 
 /**

@@ -38,7 +38,9 @@
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { GRID_SIZE, SNAP_GRID, BACKGROUND_GAP } from '$lib/constants/grid';
 	import { createRoutingSync } from './canvas/routingSync';
-	import { analyzeBuses } from '$lib/bus/expand';
+	import { isBusBlock } from '$lib/bus/expand';
+	import { updateBusView } from '$lib/stores/busView.svelte';
+	import BusBlockNode from './nodes/BusBlockNode.svelte';
 	import { createEdgeHighlighter } from '$lib/stores/edgeHighlight';
 	import { CANVAS_MIN_ZOOM } from '$lib/constants/layout';
 	import { shallowEqualArray, shallowEqualRecord } from '$lib/utils/shallowEqual';
@@ -50,6 +52,7 @@
 		toFlowEdge,
 		toEventNode,
 		toAnnotationNode,
+		isBlockFlowNode,
 		rotateSelectedNodes,
 		flipSelectedNodesHorizontal,
 		flipSelectedNodesVertical,
@@ -272,7 +275,7 @@
 
 	// Routing: the scene is diffed here and routed by the routing engine in a worker
 	const routingSync = createRoutingSync({
-		blockNodes: () => nodes.filter((n) => n.type === 'pathview'),
+		blockNodes: () => nodes.filter(isBlockFlowNode),
 		node: (id) => nodeMap.get(id),
 		connections: () => get(graphStore.connections),
 		visibleBounds
@@ -290,6 +293,7 @@
 	// Custom node types - will add more for different shapes
 	const nodeTypes: NodeTypes = {
 		pathview: BaseNode,
+		busBlock: BusBlockNode,
 		eventNode: EventNode,
 		annotation: AnnotationNode
 	};
@@ -335,7 +339,7 @@
 	$effect(() => {
 		const changed = new Set<string>();
 		for (const node of nodes) {
-			if (node.type !== 'pathview') continue;
+			if (!isBlockFlowNode(node)) continue;
 			const w = node.measured?.width;
 			const h = node.measured?.height;
 			if (w === undefined || h === undefined) continue;
@@ -513,7 +517,7 @@
 			// New node
 			return {
 				id: graphNode.id,
-				type: 'pathview',
+				type: isBusBlock(graphNode) ? 'busBlock' : 'pathview',
 				position,
 				data: graphNode,
 				// Explicit center origin for correct bounds calculation
@@ -603,27 +607,15 @@
 	const edgeHighlighter = createEdgeHighlighter(() => edges);
 	cleanups.push(edgeHighlighter.destroy);
 
-	// Connections of the current level that carry a bus; bus structure follows wires across all levels
-	function busWireIds(connections: Connection[]): Set<string> {
-		const model = graphStore.toJSON();
-		const analysis = analyzeBuses(model.nodes, model.connections);
-		const level = analysis.levelAt(graphStore.getCurrentPath());
-		if (!level) return new Set();
-		return new Set(
-			connections
-				.filter((c) => analysis.structureOut(level, c.sourceNodeId, c.sourcePortIndex) !== null)
-				.map((c) => c.id)
-		);
-	}
-
 	function rebuildEdges(connections: Connection[]): void {
 		const visibleIds = getVisibleNodeIds();
 		const currentEdgeSelection = new Map(edges.map((e) => [e.id, e.selected]));
-		const busWires = busWireIds(connections);
+		// Bus wires and bus block signal names follow the same graph changes as the edges
+		updateBusView(graphStore.toJSON(), graphStore.getCurrentPath(), connections);
 		edges = connections
 			.filter((c) => visibleIds.has(c.sourceNodeId) && visibleIds.has(c.targetNodeId))
 			.map((conn) => {
-				const edge = toFlowEdge(conn, busWires.has(conn.id));
+				const edge = toFlowEdge(conn);
 				if (currentEdgeSelection.get(conn.id)) edge.selected = true;
 				return edge;
 			});
@@ -668,7 +660,7 @@
 		const moved: string[] = [];
 		for (const node of draggedNodes) {
 			// Events and annotations don't affect routing
-			if (node.type !== 'pathview') continue;
+			if (!isBlockFlowNode(node)) continue;
 
 			const snapped = {
 				x: Math.round(node.position.x / GRID_SIZE) * GRID_SIZE,

@@ -7,6 +7,14 @@ import type { Connection, Annotation } from '$lib/nodes/types';
 import type { EventInstance } from '$lib/events/types';
 import { HANDLE_ID } from '$lib/constants/handles';
 
+/** Canvas node types that are blocks with ports: regular blocks and bus blocks */
+const BLOCK_NODE_TYPES = new Set(['pathview', 'busBlock']);
+
+/** Whether a canvas node is a block with ports, as opposed to an event or annotation */
+export function isBlockFlowNode(node: Node): boolean {
+	return BLOCK_NODE_TYPES.has(node.type ?? '');
+}
+
 /**
  * Convert an EventInstance to a SvelteFlow Node
  */
@@ -48,7 +56,7 @@ export function toAnnotationNode(annotation: Annotation): Node<Annotation> {
 /**
  * Convert a Connection to a SvelteFlow Edge
  */
-export function toFlowEdge(conn: Connection, carriesBus = false): Edge {
+export function toFlowEdge(conn: Connection): Edge {
 	return {
 		id: conn.id,
 		source: conn.sourceNodeId,
@@ -56,7 +64,7 @@ export function toFlowEdge(conn: Connection, carriesBus = false): Edge {
 		target: conn.targetNodeId,
 		targetHandle: HANDLE_ID.input(conn.targetNodeId, conn.targetPortIndex),
 		type: 'orthogonal',
-		data: { waypoints: conn.waypoints, label: conn.label, bus: carriesBus },
+		data: { waypoints: conn.waypoints, label: conn.label },
 		selectable: true,
 		deletable: true,
 		animated: false

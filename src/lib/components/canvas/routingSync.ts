@@ -13,6 +13,7 @@ import type { Bounds, PortInfo, PortStub, RouteRequest, SceneNode } from '$lib/r
 import { getPortInfo } from '$lib/routing';
 import { DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from '$lib/constants/dimensions';
 import { routingStore } from '$lib/stores/routing';
+import { isBlockFlowNode } from './flowConverters';
 
 export interface RoutingSyncSource {
 	/** Block nodes currently shown on the canvas */
@@ -147,7 +148,7 @@ export function createRoutingSync(source: RoutingSyncSource) {
 			const entries: [string, SceneNode][] = [];
 			for (const id of ids) {
 				const node = source.node(id);
-				if (node?.type === 'pathview') entries.push([id, sceneNodeOf(node, positions?.get(id))]);
+				if (node && isBlockFlowNode(node)) entries.push([id, sceneNodeOf(node, positions?.get(id))]);
 			}
 			const { changed } = routingStore.diffNodes(entries, false);
 			if (changed.length === 0) return;
