@@ -17,13 +17,12 @@
 	import { openNodeDialog } from '$lib/stores/nodeDialog';
 	import { selectedNodeHighlight } from '$lib/stores/hoveredHandle';
 	import { busCreatorSignals } from '$lib/stores/busView.svelte';
-	import { showTooltip, hideTooltip } from '$lib/components/Tooltip.svelte';
 	import NodePorts from './NodePorts.svelte';
 
 	/**
 	 * Bus Creator and Bus Selector drawn as a narrow wedge instead of a block.
 	 * The wide side carries the separate signals, the narrow side the bus.
-	 * Signal ports are always labeled; the block name shows on hover.
+	 * Port labels follow the port label settings, like blocks.
 	 */
 	interface Props {
 		id: string;
@@ -138,24 +137,15 @@
 		});
 	}
 
-	let body = $state<HTMLDivElement | null>(null);
-
-	// The block name shows on hover, but not over a signal name being edited
-	function handleMouseEnter() {
-		if (body && !editingLabel) showTooltip(data.name, body, rotation === 1 || rotation === 3 ? 'right' : 'top');
-	}
-
 	// Only signal names are edited; the bus port on the narrow side is not
 	function startLabelEdit(direction: PortDirection, index: number) {
 		if (direction === (isCreator ? 'output' : 'input')) return;
-		hideTooltip();
 		editInline(`${id}:${direction}:${index}`);
 	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-	bind:this={body}
 	class="node bus-block"
 	class:selected
 	data-rotation={rotation}
@@ -164,8 +154,6 @@
 		e.stopPropagation();
 		openNodeDialog(id);
 	}}
-	onmouseenter={handleMouseEnter}
-	onmouseleave={hideTooltip}
 >
 	<svg class="wedge" width={size.width} height={size.height}>
 		<g transform={frame}>
