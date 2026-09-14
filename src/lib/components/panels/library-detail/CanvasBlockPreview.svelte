@@ -84,9 +84,10 @@
 		border-style: dashed;
 	}
 
+	/* No border: it would shrink the box the handles align to, while the wedge fills the whole box */
 	.cbp-node.bus {
 		background: none;
-		border-color: transparent;
+		border: none;
 	}
 
 	.cbp-wedge {
