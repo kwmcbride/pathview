@@ -58,6 +58,8 @@ export const BUS = {
 	narrowSide: G.x2,
 	/** Line width of a wire carrying a bus in pixels */
 	wireWidth: 4,
+	/** A bus wire starts this far inside its source port, where the solid port is wider than the wire */
+	sourceInset: 4,
 	/** Distance of the signal count from the wire in pixels */
 	countOffset: 8
 } as const;

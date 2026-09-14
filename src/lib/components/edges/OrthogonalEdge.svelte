@@ -198,7 +198,13 @@
 	}
 
 	// Path ends at the handle tips: small inset at the source, room for the arrowhead at the target
-	const adjustedSource = $derived(alongFacing(sourceX, sourceY, sourcePosition, -EDGE_SOURCE_OFFSET));
+	// Number of signals on a wire carrying a bus; such wires are drawn thicker and show the count
+	const busSignals = $derived(busWireSignals.get(id));
+
+	// A bus wire starts inside the solid bus port, so the thick line joins it without a gap
+	const adjustedSource = $derived(
+		alongFacing(sourceX, sourceY, sourcePosition, -(busSignals !== undefined ? BUS.sourceInset : EDGE_SOURCE_OFFSET))
+	);
 	const adjustedTarget = $derived(alongFacing(targetX, targetY, targetPosition, EDGE_TARGET_OFFSET));
 
 	/**
@@ -306,8 +312,6 @@
 		return midpoints;
 	});
 
-	// Number of signals on a wire carrying a bus; such wires are drawn thicker and show the count
-	const busSignals = $derived(busWireSignals.get(id));
 
 	// Connection label, shown on the middle of the longest route segment
 	const label = $derived((data as { label?: string } | undefined)?.label ?? '');
