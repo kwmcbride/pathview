@@ -397,54 +397,26 @@
 		cursor: not-allowed;
 	}
 
-	/* Ports carrying a bus: a hollow arrow like other ports, wider across the wire
-	 * and with a heavier outline to match the thicker bus wire. Same length along
-	 * the wire as a normal handle, so wires and routing attach at the same point.
-	 * Like other ports it fills on hover and selection. */
-	:global(.node .svelte-flow__handle.handle-bus) {
-		height: 12px;
-	}
-
-	:global(.node[data-rotation="1"] .svelte-flow__handle.handle-bus),
-	:global(.node[data-rotation="3"] .svelte-flow__handle.handle-bus) {
-		width: 12px;
-		height: 10px;
-	}
-
+	/* Ports carrying a bus: the same arrow as other ports with a heavier outline,
+	 * matching the thicker bus wire. Like other ports it fills on hover and selection. */
 	:global(.node .svelte-flow__handle.handle-bus::after) {
 		inset: 1.5px;
 	}
 
-	:global(.node[data-rotation="0"] .svelte-flow__handle.handle-bus::before) {
-		clip-path: path('M 1 0 L 5 0 Q 6 0 6.7 0.7 L 9.3 5.3 Q 10 6 9.3 6.7 L 6.7 11.3 Q 6 12 5 12 L 1 12 Q 0 12 0 11 L 0 1 Q 0 0 1 0 Z');
-	}
-
-	:global(.node[data-rotation="1"] .svelte-flow__handle.handle-bus::before) {
-		clip-path: path('M 0 1 L 0 5 Q 0 6 0.7 6.7 L 5.3 9.3 Q 6 10 6.7 9.3 L 11.3 6.7 Q 12 6 12 5 L 12 1 Q 12 0 11 0 L 1 0 Q 0 0 0 1 Z');
-	}
-
-	:global(.node[data-rotation="2"] .svelte-flow__handle.handle-bus::before) {
-		clip-path: path('M 9 0 L 5 0 Q 4 0 3.3 0.7 L 0.7 5.3 Q 0 6 0.7 6.7 L 3.3 11.3 Q 4 12 5 12 L 9 12 Q 10 12 10 11 L 10 1 Q 10 0 9 0 Z');
-	}
-
-	:global(.node[data-rotation="3"] .svelte-flow__handle.handle-bus::before) {
-		clip-path: path('M 0 9 L 0 5 Q 0 4 0.7 3.3 L 5.3 0.7 Q 6 0 6.7 0.7 L 11.3 3.3 Q 12 4 12 5 L 12 9 Q 12 10 11 10 L 1 10 Q 0 10 0 9 Z');
-	}
-
 	/* Inner cutouts, 1.5px inside the outer arrow */
 	:global(.node[data-rotation="0"] .svelte-flow__handle.handle-bus::after) {
-		clip-path: path('M 0.8 0 L 3.2 0 Q 3.7 0 4 0.45 L 6.4 4.05 Q 6.7 4.5 6.4 4.95 L 4 8.55 Q 3.7 9 3.2 9 L 0.8 9 Q 0 9 0 8.2 L 0 0.8 Q 0 0 0.8 0 Z');
+		clip-path: path('M 0.6 0 L 3.5 0 Q 3.9 0 4.2 0.3 L 6.1 2.2 Q 6.4 2.5 6.1 2.8 L 4.2 4.7 Q 3.9 5 3.5 5 L 0.6 5 Q 0 5 0 4.4 L 0 0.6 Q 0 0 0.6 0 Z');
 	}
 
 	:global(.node[data-rotation="1"] .svelte-flow__handle.handle-bus::after) {
-		clip-path: path('M 0 0.8 L 0 3.2 Q 0 3.7 0.45 4 L 4.05 6.4 Q 4.5 6.7 4.95 6.4 L 8.55 4 Q 9 3.7 9 3.2 L 9 0.8 Q 9 0 8.2 0 L 0.8 0 Q 0 0 0 0.8 Z');
+		clip-path: path('M 0 0.6 L 0 3.5 Q 0 3.9 0.3 4.2 L 2.2 6.1 Q 2.5 6.4 2.8 6.1 L 4.7 4.2 Q 5 3.9 5 3.5 L 5 0.6 Q 5 0 4.4 0 L 0.6 0 Q 0 0 0 0.6 Z');
 	}
 
 	:global(.node[data-rotation="2"] .svelte-flow__handle.handle-bus::after) {
-		clip-path: path('M 6.2 0 L 3.8 0 Q 3.3 0 3 0.45 L 0.6 4.05 Q 0.3 4.5 0.6 4.95 L 3 8.55 Q 3.3 9 3.8 9 L 6.2 9 Q 7 9 7 8.2 L 7 0.8 Q 7 0 6.2 0 Z');
+		clip-path: path('M 6.4 0 L 3.5 0 Q 3.1 0 2.8 0.3 L 0.9 2.2 Q 0.6 2.5 0.9 2.8 L 2.8 4.7 Q 3.1 5 3.5 5 L 6.4 5 Q 7 5 7 4.4 L 7 0.6 Q 7 0 6.4 0 Z');
 	}
 
 	:global(.node[data-rotation="3"] .svelte-flow__handle.handle-bus::after) {
-		clip-path: path('M 0 6.2 L 0 3.8 Q 0 3.3 0.45 3 L 4.05 0.6 Q 4.5 0.3 4.95 0.6 L 8.55 3 Q 9 3.3 9 3.8 L 9 6.2 Q 9 7 8.2 7 L 0.8 7 Q 0 7 0 6.2 Z');
+		clip-path: path('M 0 6.4 L 0 3.5 Q 0 3.1 0.3 2.8 L 2.2 0.9 Q 2.5 0.6 2.8 0.9 L 4.7 2.8 Q 5 3.1 5 3.5 L 5 6.4 Q 5 7 4.4 7 L 0.6 7 Q 0 7 0 6.4 Z');
 	}
 </style>
