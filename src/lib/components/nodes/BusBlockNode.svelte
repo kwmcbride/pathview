@@ -8,6 +8,10 @@
 	import { inlineEdit, editInline } from '$lib/stores/inlineEdit.svelte';
 	import { busSelectorOptions } from '$lib/stores/busView.svelte';
 	import { selectedSignals } from '$lib/bus/expand';
+	import { renamedSignals, selectorUses } from '$lib/bus/rename';
+	import { confirmationStore } from '$lib/stores/confirmation';
+	import { portLabelsStore } from '$lib/stores/portLabels';
+	import { roundedPolygonPath } from '$lib/utils/svgPath';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { BUS, busBlockDimensions } from '$lib/constants/dimensions';
 	import { openNodeDialog } from '$lib/stores/nodeDialog';
@@ -36,16 +40,21 @@
 	const size = $derived(busBlockDimensions(data.inputs.length, data.outputs.length, rotation));
 	const nodeColor = $derived(data.color || 'var(--accent)');
 
-	// Wedge in the unrotated frame, wide side left for a creator and right for a selector
+	// Trapezoid in the unrotated frame, wide side left for a creator and right for a selector.
+	// The narrow side is set in by the same amount at any size, so the angles never change.
 	const length = $derived(Math.max(size.width, size.height));
 	const wedge = $derived.by(() => {
 		const w = BUS.blockWidth;
-		const inset = (length - BUS.narrowSide) / 2;
-		const corners = isCreator
+		const inset = BUS.wedgeInset;
+		const corners: [number, number][] = isCreator
 			? [[0, 0], [w, inset], [w, length - inset], [0, length]]
 			: [[0, inset], [w, 0], [w, length], [0, length - inset]];
-		return corners.map(([x, y]) => `${x},${y}`).join(' ');
+		return roundedPolygonPath(corners, BUS.cornerRadius);
 	});
+
+	// Port labels follow the global setting unless the block overrides it, like blocks
+	const showInputLabels = $derived((data.params?.['_showInputLabels'] as boolean | undefined) ?? $portLabelsStore);
+	const showOutputLabels = $derived((data.params?.['_showOutputLabels'] as boolean | undefined) ?? $portLabelsStore);
 
 	// Turn the unrotated frame into the node box: the input side moves like block inputs do
 	const frame = $derived.by(() => {
@@ -93,19 +102,40 @@
 	 * with its port name while nothing is connected. A selector output picks a
 	 * signal from the bus.
 	 */
-	function commitSignalName(direction: PortDirection, index: number, text: string) {
+	async function commitSignalName(direction: PortDirection, index: number, text: string) {
 		if (inlineEdit.targetId !== `${id}:${direction}:${index}`) return;
 		editInline(null);
 		const name = text.trim();
-		if (name === signalName(direction, index)) return;
+		const previous = signalName(direction, index);
+		if (name === previous) return;
 
 		if (direction === 'output') {
 			historyStore.mutate(() => graphStore.setSelectorSignal(id, index, name));
 			return;
 		}
 		const wire = get(graphStore.connections).find((c) => c.targetNodeId === id && c.targetPortIndex === index);
-		if (wire) historyStore.mutate(() => graphStore.updateConnectionLabel(wire.id, name));
-		else if (name) historyStore.mutate(() => graphStore.updateNodePortName(id, 'input', index, name));
+		if (!wire && !name) return;
+
+		// Selectors picking this signal, here or in subsystems, can follow the rename after asking
+		const source = { path: graphStore.getCurrentPath(), creatorId: id, input: index };
+		const before = graphStore.toJSON();
+		const uses = selectorUses(before.nodes, before.connections, source);
+		const everywhere =
+			uses.length > 0 &&
+			(await confirmationStore.show({
+				title: 'Rename signal everywhere?',
+				message: `"${previous}" is picked by ${uses.length} Bus Selector ${uses.length === 1 ? 'output' : 'outputs'}. Rename it there too?`,
+				confirmText: 'Rename everywhere',
+				cancelText: 'Only here'
+			}));
+
+		historyStore.mutate(() => {
+			if (wire) graphStore.updateConnectionLabel(wire.id, name);
+			else graphStore.updateNodePortName(id, 'input', index, name);
+			if (!everywhere) return;
+			const after = graphStore.toJSON();
+			graphStore.setSelectorSignalsAt(renamedSignals(after.nodes, after.connections, source, uses));
+		});
 	}
 
 	let body = $state<HTMLDivElement | null>(null);
@@ -115,7 +145,9 @@
 		if (body && !editingLabel) showTooltip(data.name, body, rotation === 1 || rotation === 3 ? 'right' : 'top');
 	}
 
+	// Only signal names are edited; the bus port on the narrow side is not
 	function startLabelEdit(direction: PortDirection, index: number) {
+		if (direction === (isCreator ? 'output' : 'input')) return;
 		hideTooltip();
 		editInline(`${id}:${direction}:${index}`);
 	}
@@ -137,8 +169,8 @@
 >
 	<svg class="wedge" width={size.width} height={size.height}>
 		<g transform={frame}>
-			<polygon class="wedge-halo" points={wedge} />
-			<polygon class="wedge-body" points={wedge} />
+			<path class="wedge-halo" d={wedge} />
+			<path class="wedge-body" d={wedge} />
 		</g>
 	</svg>
 
@@ -150,8 +182,8 @@
 		{rotation}
 		{nodeColor}
 		{selected}
-		showInputLabels={isCreator}
-		showOutputLabels={!isCreator}
+		{showInputLabels}
+		{showOutputLabels}
 		dynamicInputs={isCreator}
 		minInputs={1}
 		inputNames={isCreator ? busCreatorSignals.get(id) : undefined}

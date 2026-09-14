@@ -54,11 +54,13 @@ export const INLINE_INPUT = {
 export const BUS = {
 	/** Block width across the wedge: 2 grid units */
 	blockWidth: G.x2,
-	/** Length of the narrow wedge side where the bus attaches: 2 grid units */
-	narrowSide: G.x2,
+	/** How far the narrow side is set in at each end; the same at every size, so the angles never change: 1 grid unit */
+	wedgeInset: G.unit,
+	/** Corner radius of the wedge in pixels */
+	cornerRadius: 3,
 	/** Line width of a wire carrying a bus, relative to a plain connection */
 	wireScale: 2.5,
-	/** A bus wire starts this far inside its source port, where the solid port is wider than the wire */
+	/** A bus wire starts this far inside its source port, which covers the wire end, so the thick line joins without a gap */
 	sourceInset: 4
 } as const;
 

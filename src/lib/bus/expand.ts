@@ -21,6 +21,8 @@ export type BusStructure = BusElement[] | null;
 export interface BusElement {
 	name: string;
 	structure: BusStructure;
+	/** Bus Creator input the element was bundled at, to follow renames */
+	origin?: { creatorId: string; input: number };
 }
 
 /** One graph level: the root graph or the graph inside a subsystem */
@@ -39,7 +41,14 @@ export interface BusLevel {
 
 type Endpoint = { nodeId: string; port: number } | null;
 
-const SEPARATOR = '.';
+/** Separator of the names in a signal path such as "inner.b" */
+export const SIGNAL_SEPARATOR = '.';
+const SEPARATOR = SIGNAL_SEPARATOR;
+
+/** Subsystem IDs from the root down to a level */
+export function levelPath(level: BusLevel): string[] {
+	return level.parent ? [...levelPath(level.parent.level), level.parent.subsystem.id] : [];
+}
 
 export function isBusBlock(node: NodeInstance): boolean {
 	return node.type === NODE_TYPES.BUS_CREATOR || node.type === NODE_TYPES.BUS_SELECTOR;
@@ -166,7 +175,11 @@ export function analyzeBuses(nodes: NodeInstance[], connections: Connection[]) {
 		if (!node) return null;
 		switch (node.type) {
 			case NODE_TYPES.BUS_CREATOR:
-				return elementNames(level, node).map((name, i) => ({ name, structure: structureIn(level, node.id, i) }));
+				return elementNames(level, node).map((name, i) => ({
+					name,
+					structure: structureIn(level, node.id, i),
+					origin: { creatorId: node.id, input: i }
+				}));
 			case NODE_TYPES.BUS_SELECTOR: {
 				const path = selectedSignals(node)[port];
 				return path ? (elementAt(structureIn(level, node.id, 0), path)?.structure ?? null) : null;

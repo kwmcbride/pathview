@@ -397,9 +397,10 @@
 		cursor: not-allowed;
 	}
 
-	/* Ports carrying a bus: a solid arrow, wider across the wire, matching the
-	 * thicker bus wire. Same length along the wire as a normal handle, so wires
-	 * and routing attach at the same point. */
+	/* Ports carrying a bus: a hollow arrow like other ports, wider across the wire
+	 * and with a heavier outline to match the thicker bus wire. Same length along
+	 * the wire as a normal handle, so wires and routing attach at the same point.
+	 * Like other ports it fills on hover and selection. */
 	:global(.node .svelte-flow__handle.handle-bus) {
 		height: 12px;
 	}
@@ -411,7 +412,7 @@
 	}
 
 	:global(.node .svelte-flow__handle.handle-bus::after) {
-		display: none;
+		inset: 1.5px;
 	}
 
 	:global(.node[data-rotation="0"] .svelte-flow__handle.handle-bus::before) {
@@ -428,5 +429,22 @@
 
 	:global(.node[data-rotation="3"] .svelte-flow__handle.handle-bus::before) {
 		clip-path: path('M 0 9 L 0 5 Q 0 4 0.7 3.3 L 5.3 0.7 Q 6 0 6.7 0.7 L 11.3 3.3 Q 12 4 12 5 L 12 9 Q 12 10 11 10 L 1 10 Q 0 10 0 9 Z');
+	}
+
+	/* Inner cutouts, 1.5px inside the outer arrow */
+	:global(.node[data-rotation="0"] .svelte-flow__handle.handle-bus::after) {
+		clip-path: path('M 0.8 0 L 3.2 0 Q 3.7 0 4 0.45 L 6.4 4.05 Q 6.7 4.5 6.4 4.95 L 4 8.55 Q 3.7 9 3.2 9 L 0.8 9 Q 0 9 0 8.2 L 0 0.8 Q 0 0 0.8 0 Z');
+	}
+
+	:global(.node[data-rotation="1"] .svelte-flow__handle.handle-bus::after) {
+		clip-path: path('M 0 0.8 L 0 3.2 Q 0 3.7 0.45 4 L 4.05 6.4 Q 4.5 6.7 4.95 6.4 L 8.55 4 Q 9 3.7 9 3.2 L 9 0.8 Q 9 0 8.2 0 L 0.8 0 Q 0 0 0 0.8 Z');
+	}
+
+	:global(.node[data-rotation="2"] .svelte-flow__handle.handle-bus::after) {
+		clip-path: path('M 6.2 0 L 3.8 0 Q 3.3 0 3 0.45 L 0.6 4.05 Q 0.3 4.5 0.6 4.95 L 3 8.55 Q 3.3 9 3.8 9 L 6.2 9 Q 7 9 7 8.2 L 7 0.8 Q 7 0 6.2 0 Z');
+	}
+
+	:global(.node[data-rotation="3"] .svelte-flow__handle.handle-bus::after) {
+		clip-path: path('M 0 6.2 L 0 3.8 Q 0 3.3 0.45 3 L 4.05 0.6 Q 4.5 0.3 4.95 0.6 L 8.55 3 Q 9 3.3 9 3.8 L 9 6.2 Q 9 7 8.2 7 L 0.8 7 Q 0 7 0 6.2 Z');
 	}
 </style>
