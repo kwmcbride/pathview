@@ -28,11 +28,16 @@ export function toggleThemeWithTransition(e?: MouseEvent, fallbackOrigin?: HTMLE
 		return;
 	}
 
+	// The circle is given in percent of the snapshot box, not in pixels: browsers may size the
+	// snapshot in device pixels (e.g. on high-density displays with GPU rendering), which would
+	// put a pixel-based center at the wrong place. Percent radii refer to the box diagonal / sqrt(2).
 	const maxRadius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+	const center = `${(x / innerWidth) * 100}% ${(y / innerHeight) * 100}%`;
+	const radius = (maxRadius / (Math.hypot(innerWidth, innerHeight) / Math.SQRT2)) * 100;
 	const transition = document.startViewTransition(apply);
 	transition.ready.then(() => {
 		document.documentElement.animate(
-			{ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${maxRadius}px at ${x}px ${y}px)`] },
+			{ clipPath: [`circle(0% at ${center})`, `circle(${radius}% at ${center})`] },
 			{ duration: 500, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' }
 		);
 	});
