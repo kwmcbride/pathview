@@ -38,6 +38,7 @@
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { GRID_SIZE, SNAP_GRID, BACKGROUND_GAP } from '$lib/constants/grid';
 	import { createRoutingSync } from './canvas/routingSync';
+	import { analyzeBuses } from '$lib/bus/expand';
 	import { createEdgeHighlighter } from '$lib/stores/edgeHighlight';
 	import { CANVAS_MIN_ZOOM } from '$lib/constants/layout';
 	import { shallowEqualArray, shallowEqualRecord } from '$lib/utils/shallowEqual';
@@ -602,13 +603,27 @@
 	const edgeHighlighter = createEdgeHighlighter(() => edges);
 	cleanups.push(edgeHighlighter.destroy);
 
+	// Connections of the current level that carry a bus; bus structure follows wires across all levels
+	function busWireIds(connections: Connection[]): Set<string> {
+		const model = graphStore.toJSON();
+		const analysis = analyzeBuses(model.nodes, model.connections);
+		const level = analysis.levelAt(graphStore.getCurrentPath());
+		if (!level) return new Set();
+		return new Set(
+			connections
+				.filter((c) => analysis.structureOut(level, c.sourceNodeId, c.sourcePortIndex) !== null)
+				.map((c) => c.id)
+		);
+	}
+
 	function rebuildEdges(connections: Connection[]): void {
 		const visibleIds = getVisibleNodeIds();
 		const currentEdgeSelection = new Map(edges.map((e) => [e.id, e.selected]));
+		const busWires = busWireIds(connections);
 		edges = connections
 			.filter((c) => visibleIds.has(c.sourceNodeId) && visibleIds.has(c.targetNodeId))
 			.map((conn) => {
-				const edge = toFlowEdge(conn);
+				const edge = toFlowEdge(conn, busWires.has(conn.id));
 				if (currentEdgeSelection.get(conn.id)) edge.selected = true;
 				return edge;
 			});
@@ -766,9 +781,7 @@
 		annotationNodes = annotationNodes.filter(n => !deletedIds.has(n.id));
 
 		// Force sync edges from store after deletion
-		const afterConnections = get(graphStore.connections);
-		edges = afterConnections.map(toFlowEdge);
-		edgeHighlighter.refresh();
+		rebuildEdges(get(graphStore.connections));
 
 		isSyncing = false;
 	}

@@ -50,6 +50,12 @@ export const INLINE_INPUT = {
 	maxSuggestions: 8
 } as const;
 
+/** Wire carrying a bus */
+export const BUS_WIRE = {
+	/** Line width in pixels */
+	strokeWidth: 3
+} as const;
+
 /** Event node dimensions (grid-aligned) */
 export const EVENT = {
 	/** Total bounding box size: 8 grid units = 80px */

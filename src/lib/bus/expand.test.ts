@@ -35,7 +35,7 @@ describe('bus expansion', () => {
 			const { nodes, connections } = load(scenario);
 			const expanded = expandBuses(nodes, connections);
 			const expected = Object.fromEntries(
-				Object.entries(scenario.expected as Record<string, string[]>).map(([key, value]) => [key, [...value].sort()])
+				Object.entries(scenario.expected as unknown as Record<string, string[]>).map(([key, value]) => [key, [...value].sort()])
 			);
 			expect(levels(expanded.nodes, expanded.connections)).toEqual(expected);
 			expect(anyBusBlock(expanded.nodes)).toBe(false);

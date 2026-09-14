@@ -59,6 +59,20 @@ export function signalLeaves(structure: BusStructure): string[] {
 	);
 }
 
+/** Every signal path in a bus with its nesting depth; sub-buses come before their elements */
+export function signalPaths(structure: BusStructure): { path: string; depth: number; isBus: boolean }[] {
+	const paths: { path: string; depth: number; isBus: boolean }[] = [];
+	const walk = (elements: BusElement[], prefix: string, depth: number) => {
+		for (const element of elements) {
+			const path = prefix ? `${prefix}${SEPARATOR}${element.name}` : element.name;
+			paths.push({ path, depth, isBus: element.structure !== null });
+			if (element.structure) walk(element.structure, path, depth + 1);
+		}
+	};
+	if (structure) walk(structure, '', 0);
+	return paths;
+}
+
 /** Element at a dotted signal path */
 export function elementAt(structure: BusStructure, path: string): BusElement | undefined {
 	let current: BusElement | undefined;

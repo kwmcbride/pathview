@@ -21,3 +21,9 @@ registerSubsystemNodes();
 
 // Re-export subsystem definitions
 export { SubsystemDefinition, InterfaceDefinition } from './subsystem';
+
+// Register editor-only bus blocks
+import { registerBusNodes } from './buses';
+registerBusNodes();
+
+export { BusCreatorDefinition, BusSelectorDefinition } from './buses';

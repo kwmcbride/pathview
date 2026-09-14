@@ -35,6 +35,7 @@
 	import { screenToFlow } from '$lib/utils/viewUtils';
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
 	import InlineInput from '$lib/components/InlineInput.svelte';
+	import { BUS_WIRE } from '$lib/constants/dimensions';
 	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
@@ -298,6 +299,9 @@
 		return midpoints;
 	});
 
+	// Wires carrying a bus are drawn thicker
+	const carriesBus = $derived(Boolean((data as { bus?: boolean } | undefined)?.bus));
+
 	// Connection label, shown on the middle of the longest route segment
 	const label = $derived((data as { label?: string } | undefined)?.label ?? '');
 	const isEditingLabel = $derived(edgeLabelEdit.connectionId === id);
@@ -380,7 +384,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <g
 	class:highlighted={highlightColor !== undefined}
-	style={highlightColor !== undefined ? `--highlight-color: ${highlightColor}` : undefined}
+	class:bus-wire={carriesBus}
+	style="--bus-wire-width: {BUS_WIRE.strokeWidth}px;{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
 	ondblclick={handleEdgeDoubleClick}
 >
 	<BaseEdge {id} {path} {style} />
@@ -462,6 +467,10 @@
 
 	:global(.svelte-flow__edge:hover) .edge-arrow {
 		fill: var(--accent);
+	}
+
+	.bus-wire :global(.svelte-flow__edge-path) {
+		stroke-width: var(--bus-wire-width);
 	}
 
 	/* Highlight the edge path when handle is hovered */

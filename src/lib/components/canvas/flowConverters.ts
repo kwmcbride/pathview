@@ -48,7 +48,7 @@ export function toAnnotationNode(annotation: Annotation): Node<Annotation> {
 /**
  * Convert a Connection to a SvelteFlow Edge
  */
-export function toFlowEdge(conn: Connection): Edge {
+export function toFlowEdge(conn: Connection, carriesBus = false): Edge {
 	return {
 		id: conn.id,
 		source: conn.sourceNodeId,
@@ -56,7 +56,7 @@ export function toFlowEdge(conn: Connection): Edge {
 		target: conn.targetNodeId,
 		targetHandle: HANDLE_ID.input(conn.targetNodeId, conn.targetPortIndex),
 		type: 'orthogonal',
-		data: { waypoints: conn.waypoints, label: conn.label },
+		data: { waypoints: conn.waypoints, label: conn.label, bus: carriesBus },
 		selectable: true,
 		deletable: true,
 		animated: false
