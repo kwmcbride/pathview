@@ -110,8 +110,14 @@
 
 	let body = $state<HTMLDivElement | null>(null);
 
+	// The block name shows on hover, but not over a signal name being edited
 	function handleMouseEnter() {
-		if (body) showTooltip(data.name, body, rotation === 1 || rotation === 3 ? 'right' : 'top');
+		if (body && !editingLabel) showTooltip(data.name, body, rotation === 1 || rotation === 3 ? 'right' : 'top');
+	}
+
+	function startLabelEdit(direction: PortDirection, index: number) {
+		hideTooltip();
+		editInline(`${id}:${direction}:${index}`);
 	}
 </script>
 
@@ -153,7 +159,7 @@
 		busOutputs={isCreator ? [0] : undefined}
 		signalLabels
 		{editingLabel}
-		onLabelEdit={(direction, index) => editInline(`${id}:${direction}:${index}`)}
+		onLabelEdit={startLabelEdit}
 		{labelEditor}
 	/>
 </div>
