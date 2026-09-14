@@ -198,7 +198,7 @@
 	}
 
 	// Path ends at the handle tips: small inset at the source, room for the arrowhead at the target
-	// Number of signals on a wire carrying a bus; such wires are drawn thicker and show the count
+	// Number of signals on a wire carrying a bus; such wires are drawn thicker
 	const busSignals = $derived(busWireSignals.get(id));
 
 	// A bus wire starts inside the solid bus port, so the thick line joins it without a gap
@@ -317,9 +317,9 @@
 	const label = $derived((data as { label?: string } | undefined)?.label ?? '');
 	const isEditingLabel = $derived(inlineEdit.targetId === id);
 
-	// Middle of the longest route segment, where the label and the bus signal count sit
+	// Middle of the longest route segment, where the label sits
 	const segmentAnchor = $derived.by(() => {
-		if (!label && !isEditingLabel && busSignals === undefined) return null;
+		if (!label && !isEditingLabel) return null;
 		const points = displayedRoute
 			? [adjustedSource, ...displayedRoute.path, adjustedTarget]
 			: [adjustedSource, adjustedTarget];
@@ -448,18 +448,6 @@
 		/>
 	</g>
 
-	<!-- Signal count beside a bus wire: above horizontal segments, left of vertical ones -->
-	{#if busSignals !== undefined && segmentAnchor}
-		<text
-			x={segmentAnchor.vertical ? segmentAnchor.x - BUS.countOffset : segmentAnchor.x}
-			y={segmentAnchor.vertical ? segmentAnchor.y : segmentAnchor.y - BUS.countOffset}
-			class="bus-count"
-			class:vertical={segmentAnchor.vertical}
-			class:selected
-			class:highlighted={highlightColor !== undefined}>{busSignals}</text
-		>
-	{/if}
-
 	<!-- Labels on vertical segments read bottom to top along the wire; a wire into a Bus Creator shows its label at the creator port -->
 	{#if label && !isEditingLabel && labelAnchor && !busCreatorWires.has(id)}
 		<text
@@ -528,34 +516,6 @@
 	}
 
 	.edge-label.highlighted {
-		fill: var(--highlight-color, var(--accent));
-	}
-
-	/* Bus signal count, same halo and colors as the label */
-	.bus-count {
-		font-family: var(--font-ui);
-		font-size: var(--font-xs);
-		fill: var(--text-muted);
-		stroke: var(--surface);
-		stroke-width: 3px;
-		stroke-linejoin: round;
-		paint-order: stroke;
-		text-anchor: middle;
-		dominant-baseline: central;
-		pointer-events: none;
-		transition: fill 0.15s ease;
-	}
-
-	.bus-count.vertical {
-		text-anchor: end;
-	}
-
-	:global(.svelte-flow__edge:hover) .bus-count,
-	.bus-count.selected {
-		fill: var(--accent);
-	}
-
-	.bus-count.highlighted {
 		fill: var(--highlight-color, var(--accent));
 	}
 
