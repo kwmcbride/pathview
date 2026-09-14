@@ -36,7 +36,7 @@
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
 	import InlineInput from '$lib/components/InlineInput.svelte';
 	import { BUS } from '$lib/constants/dimensions';
-	import { busWireSignals, busCreatorWires } from '$lib/stores/busView.svelte';
+	import { busWires, busCreatorWires } from '$lib/stores/busView.svelte';
 	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
@@ -198,12 +198,12 @@
 	}
 
 	// Path ends at the handle tips: small inset at the source, room for the arrowhead at the target
-	// Number of signals on a wire carrying a bus; such wires are drawn thicker
-	const busSignals = $derived(busWireSignals.get(id));
+	// Wires carrying a bus are drawn thicker
+	const carriesBus = $derived(busWires.has(id));
 
 	// A bus wire starts inside the solid bus port, so the thick line joins it without a gap
 	const adjustedSource = $derived(
-		alongFacing(sourceX, sourceY, sourcePosition, -(busSignals !== undefined ? BUS.sourceInset : EDGE_SOURCE_OFFSET))
+		alongFacing(sourceX, sourceY, sourcePosition, -(carriesBus ? BUS.sourceInset : EDGE_SOURCE_OFFSET))
 	);
 	const adjustedTarget = $derived(alongFacing(targetX, targetY, targetPosition, EDGE_TARGET_OFFSET));
 
@@ -402,8 +402,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <g
 	class:highlighted={highlightColor !== undefined}
-	class:bus-wire={busSignals !== undefined}
-	style="{busSignals !== undefined ? `--wire-scale: ${BUS.wireScale};` : ''}{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
+	class:bus-wire={carriesBus}
+	style="{carriesBus ? `--wire-scale: ${BUS.wireScale};` : ''}{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
 	ondblclick={handleEdgeDoubleClick}
 >
 	<BaseEdge {id} {path} {style} />
@@ -441,7 +441,7 @@
 	<!-- Arrow at the end - offset forward 5px to reach target handle tip -->
 	<g transform="translate({endArrow.x}, {endArrow.y}) rotate({endArrow.angle}) translate(5, 0)">
 		<path
-			d={busSignals !== undefined ? BUS_ARROW_PATH : ARROW_PATH}
+			d={carriesBus ? BUS_ARROW_PATH : ARROW_PATH}
 			class="edge-arrow"
 			class:selected
 			class:highlighted={highlightColor !== undefined}

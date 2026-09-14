@@ -9,10 +9,10 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Connection, NodeInstance } from '$lib/nodes/types';
 import { NODE_TYPES } from '$lib/constants/nodeTypes';
-import { analyzeBuses, containsBusBlocks, signalLeaves, signalPaths } from '$lib/bus/expand';
+import { analyzeBuses, containsBusBlocks, signalPaths } from '$lib/bus/expand';
 
-/** Connection ID to the number of signals the wire carries; absent for plain wires */
-export const busWireSignals = new SvelteMap<string, number>();
+/** Wires carrying a bus */
+export const busWires = new SvelteSet<string>();
 
 /** Bus Creator ID to the signal name of each of its inputs */
 export const busCreatorSignals = new SvelteMap<string, string[]>();
@@ -36,6 +36,13 @@ function sync<T>(target: SvelteMap<string, T>, next: Map<string, T>, same: (a: T
 	}
 }
 
+function syncSet(target: SvelteSet<string>, next: Set<string>): void {
+	for (const key of [...target]) {
+		if (!next.has(key)) target.delete(key);
+	}
+	for (const key of next) target.add(key);
+}
+
 const sameNames = (a: string[], b: string[]) => a.length === b.length && a.every((name, i) => name === b[i]);
 const sameIndices = (a: number[], b: number[]) => a.length === b.length && a.every((index, i) => index === b[i]);
 
@@ -48,7 +55,7 @@ export function updateBusView(
 	path: string[],
 	connections: Connection[]
 ): void {
-	const wires = new Map<string, number>();
+	const wires = new Set<string>();
 	const creators = new Map<string, string[]>();
 	const ports = new Map<string, { inputs: number[]; outputs: number[] }>();
 	const selectorOptions = new Map<string, string[]>();
@@ -59,8 +66,7 @@ export function updateBusView(
 		const level = analysis.levelAt(path);
 		if (level) {
 			for (const connection of connections) {
-				const structure = analysis.structureOut(level, connection.sourceNodeId, connection.sourcePortIndex);
-				if (structure) wires.set(connection.id, signalLeaves(structure).length);
+				if (analysis.structureOut(level, connection.sourceNodeId, connection.sourcePortIndex)) wires.add(connection.id);
 				if (level.nodes.get(connection.targetNodeId)?.type === NODE_TYPES.BUS_CREATOR) creatorWires.add(connection.id);
 			}
 			for (const node of level.nodeList) {
@@ -75,12 +81,9 @@ export function updateBusView(
 		}
 	}
 
-	sync(busWireSignals, wires, (a, b) => a === b);
+	syncSet(busWires, wires);
 	sync(busCreatorSignals, creators, sameNames);
 	sync(busPorts, ports, (a, b) => sameIndices(a.inputs, b.inputs) && sameIndices(a.outputs, b.outputs));
 	sync(busSelectorOptions, selectorOptions, sameNames);
-	for (const id of [...busCreatorWires]) {
-		if (!creatorWires.has(id)) busCreatorWires.delete(id);
-	}
-	for (const id of creatorWires) busCreatorWires.add(id);
+	syncSet(busCreatorWires, creatorWires);
 }

@@ -6,18 +6,15 @@
 		placeholder?: string;
 		/** Names offered below the input; omit for a plain text field */
 		suggestions?: string[];
-		/** Text of the entry that commits a name missing from the suggestions; omit to hide it */
-		createLabel?: (text: string) => string;
 		onCommit: (text: string) => void;
 		onCancel: () => void;
 	}
 
-	let { value = '', placeholder = '', suggestions, createLabel, onCommit, onCancel }: Props = $props();
+	let { value = '', placeholder = '', suggestions, onCommit, onCancel }: Props = $props();
 
 	interface Option {
 		text: string;
-		create: boolean;
-		/** Index of the query inside the text, -1 for the create entry */
+		/** Index of the query inside the text */
 		match: number;
 	}
 
@@ -31,19 +28,15 @@
 
 	const query = $derived(touched ? text.trim() : '');
 
-	// Matching suggestions, prefix matches first, then the create entry
+	// Matching suggestions, prefix matches first
 	const options = $derived.by((): Option[] => {
 		if (!suggestions) return [];
 		const lower = query.toLowerCase();
-		const matches = suggestions
-			.map((name) => ({ text: name, create: false, match: name.toLowerCase().indexOf(lower) }))
+		return suggestions
+			.map((name) => ({ text: name, match: name.toLowerCase().indexOf(lower) }))
 			.filter((option) => option.match >= 0)
 			.sort((a, b) => a.match - b.match)
 			.slice(0, INLINE_INPUT.maxSuggestions);
-		if (createLabel && query && !suggestions.includes(query)) {
-			matches.push({ text: query, create: true, match: -1 });
-		}
-		return matches;
 	});
 
 	const active = $derived(Math.min(activeIndex, options.length - 1));
@@ -141,20 +134,17 @@
 		role="listbox"
 		use:portal
 	>
-		{#each options as option, i (option.create ? '' : option.text)}
+		{#each options as option, i (option.text)}
 			<div
 				class="option"
 				class:active={i === active}
-				class:create={option.create}
 				role="option"
 				aria-selected={i === active}
 				tabindex="-1"
 				onpointerdown={(event) => pick(event, option)}
 				onpointerenter={() => (activeIndex = i)}
 			>
-				{#if option.create && createLabel}
-					{createLabel(option.text)}
-				{:else if query}
+				{#if query}
 					{option.text.slice(0, option.match)}<span class="hit"
 						>{option.text.slice(option.match, option.match + query.length)}</span
 					>{option.text.slice(option.match + query.length)}
@@ -220,13 +210,4 @@
 	.hit {
 		color: var(--text);
 		font-weight: 500;
-	}
-
-	.option.create {
-		color: var(--text-disabled);
-	}
-
-	.option.create.active {
-		color: var(--text-muted);
-	}
-</style>
+	}</style>
