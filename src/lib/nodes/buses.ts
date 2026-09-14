@@ -6,12 +6,12 @@
 
 import { defineNode } from './defineNode';
 import { nodeRegistry } from './registry';
-import { NODE_TYPES } from '$lib/constants/nodeTypes';
+import { BUS_CATEGORY, NODE_TYPES } from '$lib/constants/nodeTypes';
 
 /** Bus Creator - bundles its input signals into one bus */
 export const BusCreatorDefinition = defineNode({
 	name: 'Bus Creator',
-	category: 'Subsystem',
+	category: BUS_CATEGORY,
 	blockClass: NODE_TYPES.BUS_CREATOR,
 	description:
 		'Bundles its input signals into one bus. A signal is named after the label of its wire, or else the port it comes from.',
@@ -28,7 +28,7 @@ export const BusCreatorDefinition = defineNode({
 /** Bus Selector - picks signals out of a bus; its outputs follow the picked signals */
 export const BusSelectorDefinition = defineNode({
 	name: 'Bus Selector',
-	category: 'Subsystem',
+	category: BUS_CATEGORY,
 	blockClass: NODE_TYPES.BUS_SELECTOR,
 	description: 'Picks signals out of a bus by name, one output per picked signal.',
 	inputs: ['bus'],

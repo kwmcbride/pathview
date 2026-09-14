@@ -6,18 +6,17 @@
 	import { graphStore } from '$lib/stores/graph';
 	import { historyStore } from '$lib/stores/history';
 	import { inlineEdit, editInline } from '$lib/stores/inlineEdit.svelte';
-	import { busSelectorOptions } from '$lib/stores/busView.svelte';
+	import { busCreatorSignals, busSelectorOptions } from '$lib/stores/busView.svelte';
 	import { selectedSignals } from '$lib/bus/expand';
 	import { renamedSignals, selectorUses } from '$lib/bus/rename';
 	import { confirmationStore } from '$lib/stores/confirmation';
 	import { portLabelsStore } from '$lib/stores/portLabels';
-	import { roundedPolygonPath } from '$lib/utils/svgPath';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
-	import { BUS, busBlockDimensions } from '$lib/constants/dimensions';
+	import { busBlockDimensions } from '$lib/constants/dimensions';
 	import { openNodeDialog } from '$lib/stores/nodeDialog';
 	import { selectedNodeHighlight } from '$lib/stores/hoveredHandle';
-	import { busCreatorSignals } from '$lib/stores/busView.svelte';
 	import NodePorts from './NodePorts.svelte';
+	import BusWedge from './BusWedge.svelte';
 
 	/**
 	 * Bus Creator and Bus Selector drawn as a narrow wedge instead of a block.
@@ -39,31 +38,9 @@
 	const size = $derived(busBlockDimensions(data.inputs.length, data.outputs.length, rotation));
 	const nodeColor = $derived(data.color || 'var(--accent)');
 
-	// Trapezoid in the unrotated frame, wide side left for a creator and right for a selector.
-	// The narrow side is set in by the same amount at any size, so the angles never change.
-	const length = $derived(Math.max(size.width, size.height));
-	const wedge = $derived.by(() => {
-		const w = BUS.blockWidth;
-		const inset = BUS.wedgeInset;
-		const corners: [number, number][] = isCreator
-			? [[0, 0], [w, inset], [w, length - inset], [0, length]]
-			: [[0, inset], [w, 0], [w, length], [0, length - inset]];
-		return roundedPolygonPath(corners, BUS.cornerRadius);
-	});
-
 	// Port labels follow the global setting unless the block overrides it, like blocks
 	const showInputLabels = $derived((data.params?.['_showInputLabels'] as boolean | undefined) ?? $portLabelsStore);
 	const showOutputLabels = $derived((data.params?.['_showOutputLabels'] as boolean | undefined) ?? $portLabelsStore);
-
-	// Turn the unrotated frame into the node box: the input side moves like block inputs do
-	const frame = $derived.by(() => {
-		switch (rotation) {
-			case 1: return `translate(${length}, 0) rotate(90)`;
-			case 2: return `translate(${BUS.blockWidth}, ${length}) rotate(180)`;
-			case 3: return `translate(0, ${BUS.blockWidth}) rotate(270)`;
-			default: return undefined;
-		}
-	});
 
 	// Re-measure handles when the wedge changes size or orientation
 	$effect(() => {
@@ -155,12 +132,9 @@
 		openNodeDialog(id);
 	}}
 >
-	<svg class="wedge" width={size.width} height={size.height}>
-		<g transform={frame}>
-			<path class="wedge-halo" d={wedge} />
-			<path class="wedge-body" d={wedge} />
-		</g>
-	</svg>
+	<div class="wedge">
+		<BusWedge creator={isCreator} length={Math.max(size.width, size.height)} {rotation} {selected} />
+	</div>
 
 	<!-- The narrow side is always the bus port; a creator takes more inputs, a selector's outputs follow its signals -->
 	<NodePorts
@@ -202,30 +176,5 @@
 	.wedge {
 		position: absolute;
 		inset: 0;
-		overflow: visible;
-	}
-
-	.wedge-body {
-		fill: var(--surface-raised);
-		stroke: var(--edge);
-		stroke-width: 1;
-		stroke-linejoin: round;
-		transition: stroke 0.15s ease;
-	}
-
-	/* Selection ring like the block box-shadow: a wide translucent stroke behind the body */
-	.wedge-halo {
-		fill: none;
-		stroke: transparent;
-		stroke-width: 5;
-		stroke-linejoin: round;
-	}
-
-	.bus-block.selected .wedge-body {
-		stroke: var(--node-color);
-	}
-
-	.bus-block.selected .wedge-halo {
-		stroke: color-mix(in srgb, var(--node-color) 25%, transparent);
 	}
 </style>

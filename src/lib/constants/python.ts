@@ -33,6 +33,7 @@ export const BLOCK_CATEGORY_ORDER: string[] = [
 	'Discrete',
 	'FMI',
 	'Recording',
+	'Buses',
 	'Subsystem'
 ];
 

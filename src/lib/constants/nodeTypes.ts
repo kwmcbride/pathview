@@ -11,3 +11,6 @@ export const NODE_TYPES = {
 } as const;
 
 export type NodeTypeId = (typeof NODE_TYPES)[keyof typeof NODE_TYPES];
+
+/** Library category of the editor-only bus blocks */
+export const BUS_CATEGORY = 'Buses';

@@ -1,6 +1,9 @@
 <script lang="ts">
 	import type { NodeTypeDefinition } from '$lib/nodes/types';
 	import { getShapeCssClass } from '$lib/nodes/shapes';
+	import { NODE_TYPES } from '$lib/constants/nodeTypes';
+	import { busBlockDimensions } from '$lib/constants/dimensions';
+	import BusWedge from './BusWedge.svelte';
 
 	interface Props {
 		node: NodeTypeDefinition;
@@ -10,11 +13,22 @@
 
 	const isSubsystemType = $derived(node.category === 'Subsystem');
 	const shapeClass = $derived(() => getShapeCssClass(node));
+
+	// Bus blocks show their symbol instead of a block card
+	const isBus = $derived(node.type === NODE_TYPES.BUS_CREATOR || node.type === NODE_TYPES.BUS_SELECTOR);
+	const busLength = $derived(busBlockDimensions(node.ports.inputs.length, node.ports.outputs.length, 0).height);
 </script>
 
-<div class="node-preview {shapeClass()}" class:subsystem-type={isSubsystemType}>
-	<span class="node-name">{node.name}</span>
-</div>
+{#if isBus}
+	<div class="node-preview bus-preview">
+		<BusWedge creator={node.type === NODE_TYPES.BUS_CREATOR} length={busLength} />
+		<span class="node-name">{node.name}</span>
+	</div>
+{:else}
+	<div class="node-preview {shapeClass()}" class:subsystem-type={isSubsystemType}>
+		<span class="node-name">{node.name}</span>
+	</div>
+{/if}
 
 <style>
 	.node-preview {
@@ -27,6 +41,12 @@
 		align-items: center;
 		justify-content: center;
 		transition: all 0.15s ease;
+	}
+
+	.bus-preview {
+		gap: var(--space-sm);
+		background: none;
+		border-color: transparent;
 	}
 
 	.shape-pill { border-radius: 20px; }
