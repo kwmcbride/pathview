@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pathview.buses import expand_buses
+
 
 # =============================================================================
 # Registry
@@ -322,8 +324,8 @@ def generate_python(pvm: dict, registry: dict, source_name: str = "") -> str:
     divider = "# " + "\u2500" * 76
 
     graph = pvm.get("graph", {})
-    nodes = graph.get("nodes", [])
-    connections = graph.get("connections", [])
+    # Bus Creator and Bus Selector exist only in the editor; wire their signals directly
+    nodes, connections = expand_buses(graph.get("nodes", []), graph.get("connections", []))
     events = pvm.get("events", [])
     code_context = pvm.get("codeContext", {}).get("code", "")
     settings = pvm.get("simulationSettings", {})

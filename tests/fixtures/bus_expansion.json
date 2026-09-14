@@ -1,0 +1,221 @@
+{
+  "description": "Bus expansion cases shared by src/lib/bus/expand.test.ts and tests/test_bus_expansion.py. Expected wiring per level as source:port>target:port; level keys are subsystem ID paths joined by '/', the root is ''.",
+  "scenarios": [
+    {
+      "name": "flat creator and selector",
+      "nodes": [
+        { "id": "A", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "B", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "C", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] },
+        { "id": "S", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "b" }, { "name": "out 0" }], "params": { "signals": ["b", "out 0"] } },
+        { "id": "Scope", "type": "Scope", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [] }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "A", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 0 },
+        { "id": "c2", "sourceNodeId": "B", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 1, "label": "b" },
+        { "id": "c3", "sourceNodeId": "C", "sourcePortIndex": 0, "targetNodeId": "S", "targetPortIndex": 0 },
+        { "id": "c4", "sourceNodeId": "S", "sourcePortIndex": 0, "targetNodeId": "Scope", "targetPortIndex": 0 },
+        { "id": "c5", "sourceNodeId": "S", "sourcePortIndex": 1, "targetNodeId": "Scope", "targetPortIndex": 1 }
+      ],
+      "expected": { "": ["B:0>Scope:0", "A:0>Scope:1"] }
+    },
+    {
+      "name": "duplicate names are numbered and fan-out is kept",
+      "nodes": [
+        { "id": "A", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "B", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "C", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] },
+        { "id": "S", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "out 0_2" }], "params": { "signals": ["out 0_2"] } },
+        { "id": "X", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] },
+        { "id": "Y", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "A", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 0 },
+        { "id": "c2", "sourceNodeId": "B", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 1 },
+        { "id": "c3", "sourceNodeId": "C", "sourcePortIndex": 0, "targetNodeId": "S", "targetPortIndex": 0 },
+        { "id": "c4", "sourceNodeId": "S", "sourcePortIndex": 0, "targetNodeId": "X", "targetPortIndex": 0 },
+        { "id": "c5", "sourceNodeId": "S", "sourcePortIndex": 0, "targetNodeId": "Y", "targetPortIndex": 0 }
+      ],
+      "expected": { "": ["B:0>X:0", "B:0>Y:0"] }
+    },
+    {
+      "name": "nested buses and selecting a sub-bus",
+      "nodes": [
+        { "id": "A", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "B", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "D", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "C1", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] },
+        { "id": "C2", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] },
+        { "id": "S", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "inner.b" }, { "name": "d" }, { "name": "inner" }], "params": { "signals": ["inner.b", "d", "inner"] } },
+        { "id": "S2", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "a" }], "params": { "signals": ["a"] } },
+        { "id": "X", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] },
+        { "id": "Y", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] },
+        { "id": "Z", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "A", "sourcePortIndex": 0, "targetNodeId": "C1", "targetPortIndex": 0, "label": "a" },
+        { "id": "c2", "sourceNodeId": "B", "sourcePortIndex": 0, "targetNodeId": "C1", "targetPortIndex": 1, "label": "b" },
+        { "id": "c3", "sourceNodeId": "C1", "sourcePortIndex": 0, "targetNodeId": "C2", "targetPortIndex": 0, "label": "inner" },
+        { "id": "c4", "sourceNodeId": "D", "sourcePortIndex": 0, "targetNodeId": "C2", "targetPortIndex": 1, "label": "d" },
+        { "id": "c5", "sourceNodeId": "C2", "sourcePortIndex": 0, "targetNodeId": "S", "targetPortIndex": 0 },
+        { "id": "c6", "sourceNodeId": "S", "sourcePortIndex": 0, "targetNodeId": "X", "targetPortIndex": 0 },
+        { "id": "c7", "sourceNodeId": "S", "sourcePortIndex": 1, "targetNodeId": "Y", "targetPortIndex": 0 },
+        { "id": "c8", "sourceNodeId": "S", "sourcePortIndex": 2, "targetNodeId": "S2", "targetPortIndex": 0 },
+        { "id": "c9", "sourceNodeId": "S2", "sourcePortIndex": 0, "targetNodeId": "Z", "targetPortIndex": 0 }
+      ],
+      "expected": { "": ["B:0>X:0", "D:0>Y:0", "A:0>Z:0"] }
+    },
+    {
+      "name": "bus into a subsystem",
+      "nodes": [
+        { "id": "A", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "B", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "C", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] },
+        {
+          "id": "Sub", "type": "Subsystem", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "out 0" }],
+          "graph": {
+            "nodes": [
+              { "id": "I", "type": "Interface", "inputs": [{ "name": "out 0" }], "outputs": [{ "name": "in 0" }] },
+              { "id": "Sel", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "b" }], "params": { "signals": ["b"] } },
+              { "id": "G", "type": "Amplifier", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "out 0" }] }
+            ],
+            "connections": [
+              { "id": "s1", "sourceNodeId": "I", "sourcePortIndex": 0, "targetNodeId": "Sel", "targetPortIndex": 0 },
+              { "id": "s2", "sourceNodeId": "Sel", "sourcePortIndex": 0, "targetNodeId": "G", "targetPortIndex": 0 },
+              { "id": "s3", "sourceNodeId": "G", "sourcePortIndex": 0, "targetNodeId": "I", "targetPortIndex": 0 }
+            ]
+          }
+        },
+        { "id": "Scope", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "A", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 0, "label": "a" },
+        { "id": "c2", "sourceNodeId": "B", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 1, "label": "b" },
+        { "id": "c3", "sourceNodeId": "C", "sourcePortIndex": 0, "targetNodeId": "Sub", "targetPortIndex": 0 },
+        { "id": "c4", "sourceNodeId": "Sub", "sourcePortIndex": 0, "targetNodeId": "Scope", "targetPortIndex": 0 }
+      ],
+      "expected": {
+        "": ["A:0>Sub:0", "B:0>Sub:1", "Sub:0>Scope:0"],
+        "Sub": ["I:1>G:0", "G:0>I:0"]
+      }
+    },
+    {
+      "name": "bus out of a subsystem",
+      "nodes": [
+        {
+          "id": "Sub", "type": "Subsystem", "inputs": [], "outputs": [{ "name": "out 0" }],
+          "graph": {
+            "nodes": [
+              { "id": "I", "type": "Interface", "inputs": [{ "name": "out 0" }], "outputs": [] },
+              { "id": "G1", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+              { "id": "G2", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+              { "id": "C", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] }
+            ],
+            "connections": [
+              { "id": "s1", "sourceNodeId": "G1", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 0, "label": "x" },
+              { "id": "s2", "sourceNodeId": "G2", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 1, "label": "y" },
+              { "id": "s3", "sourceNodeId": "C", "sourcePortIndex": 0, "targetNodeId": "I", "targetPortIndex": 0 }
+            ]
+          }
+        },
+        { "id": "Sel", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "y" }], "params": { "signals": ["y"] } },
+        { "id": "Scope", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "Sub", "sourcePortIndex": 0, "targetNodeId": "Sel", "targetPortIndex": 0 },
+        { "id": "c2", "sourceNodeId": "Sel", "sourcePortIndex": 0, "targetNodeId": "Scope", "targetPortIndex": 0 }
+      ],
+      "expected": {
+        "": ["Sub:1>Scope:0"],
+        "Sub": ["G1:0>I:0", "G2:0>I:1"]
+      }
+    },
+    {
+      "name": "bus through two subsystem levels",
+      "nodes": [
+        { "id": "A", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "B", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "C", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] },
+        {
+          "id": "Outer", "type": "Subsystem", "inputs": [{ "name": "in 0" }], "outputs": [],
+          "graph": {
+            "nodes": [
+              { "id": "I1", "type": "Interface", "inputs": [], "outputs": [{ "name": "in 0" }] },
+              {
+                "id": "Inner", "type": "Subsystem", "inputs": [{ "name": "in 0" }], "outputs": [],
+                "graph": {
+                  "nodes": [
+                    { "id": "I2", "type": "Interface", "inputs": [], "outputs": [{ "name": "in 0" }] },
+                    { "id": "Sel", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "a" }], "params": { "signals": ["a"] } },
+                    { "id": "G", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] }
+                  ],
+                  "connections": [
+                    { "id": "i1", "sourceNodeId": "I2", "sourcePortIndex": 0, "targetNodeId": "Sel", "targetPortIndex": 0 },
+                    { "id": "i2", "sourceNodeId": "Sel", "sourcePortIndex": 0, "targetNodeId": "G", "targetPortIndex": 0 }
+                  ]
+                }
+              }
+            ],
+            "connections": [
+              { "id": "o1", "sourceNodeId": "I1", "sourcePortIndex": 0, "targetNodeId": "Inner", "targetPortIndex": 0 }
+            ]
+          }
+        }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "A", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 0, "label": "a" },
+        { "id": "c2", "sourceNodeId": "B", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 1, "label": "b" },
+        { "id": "c3", "sourceNodeId": "C", "sourcePortIndex": 0, "targetNodeId": "Outer", "targetPortIndex": 0 }
+      ],
+      "expected": {
+        "": ["A:0>Outer:0", "B:0>Outer:1"],
+        "Outer": ["I1:0>Inner:0", "I1:1>Inner:1"],
+        "Outer/Inner": ["I2:0>G:0"]
+      }
+    },
+    {
+      "name": "unresolvable wiring is left out",
+      "nodes": [
+        { "id": "A", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "C", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] },
+        { "id": "Sel", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "a" }, { "name": "missing" }], "params": { "signals": ["a", "missing"] } },
+        { "id": "X", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] },
+        { "id": "Y", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] },
+        { "id": "Scope", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "A", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 0, "label": "a" },
+        { "id": "c2", "sourceNodeId": "C", "sourcePortIndex": 0, "targetNodeId": "Sel", "targetPortIndex": 0 },
+        { "id": "c3", "sourceNodeId": "Sel", "sourcePortIndex": 0, "targetNodeId": "X", "targetPortIndex": 0 },
+        { "id": "c4", "sourceNodeId": "Sel", "sourcePortIndex": 1, "targetNodeId": "Y", "targetPortIndex": 0 },
+        { "id": "c5", "sourceNodeId": "C", "sourcePortIndex": 0, "targetNodeId": "Scope", "targetPortIndex": 0 }
+      ],
+      "expected": { "": ["A:0>X:0"] }
+    },
+    {
+      "name": "wire loop through bus blocks terminates",
+      "nodes": [
+        { "id": "A", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "C", "type": "BusCreator", "inputs": [{ "name": "in 0" }, { "name": "in 1" }], "outputs": [{ "name": "out 0" }] },
+        { "id": "S", "type": "BusSelector", "inputs": [{ "name": "in 0" }], "outputs": [{ "name": "loop" }], "params": { "signals": ["loop"] } }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "A", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 0, "label": "a" },
+        { "id": "c2", "sourceNodeId": "C", "sourcePortIndex": 0, "targetNodeId": "S", "targetPortIndex": 0 },
+        { "id": "c3", "sourceNodeId": "S", "sourcePortIndex": 0, "targetNodeId": "C", "targetPortIndex": 1, "label": "loop" }
+      ],
+      "expected": { "": [] }
+    },
+    {
+      "name": "model without buses is unchanged",
+      "nodes": [
+        { "id": "A", "type": "Constant", "inputs": [], "outputs": [{ "name": "out 0" }] },
+        { "id": "X", "type": "Scope", "inputs": [{ "name": "in 0" }], "outputs": [] }
+      ],
+      "connections": [
+        { "id": "c1", "sourceNodeId": "A", "sourcePortIndex": 0, "targetNodeId": "X", "targetPortIndex": 0 }
+      ],
+      "expected": { "": ["A:0>X:0"] }
+    }
+  ]
+}
