@@ -67,7 +67,7 @@
 	const ARROW_PATH = 'M -5 -2.5 L -1 -0.5 Q 0 0 -1 0.5 L -5 2.5 Q -6 3 -6 2 L -6 -2 Q -6 -3 -5 -2.5 Z';
 
 	/** Wider arrowhead for the thicker bus wire; its base overlaps the wire end */
-	const BUS_ARROW_PATH = 'M -6 -3.75 L -1 -0.6 Q 0 0 -1 0.6 L -6 3.75 Q -7 4.2 -7 3.2 L -7 -3.2 Q -7 -4.2 -6 -3.75 Z';
+	const BUS_ARROW_PATH = 'M -5.5 -3 L -1 -0.5 Q 0 0 -1 0.5 L -5.5 3 Q -6.5 3.5 -6.5 2.5 L -6.5 -2.5 Q -6.5 -3.5 -5.5 -3 Z';
 
 	/** Minimum distance of a segment midpoint handle from an existing waypoint */
 	const MIN_DISTANCE_FROM_WAYPOINT = 20;

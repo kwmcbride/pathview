@@ -59,7 +59,7 @@ export const BUS = {
 	/** Corner radius of the wedge in pixels */
 	cornerRadius: 3,
 	/** Line width of a wire carrying a bus, relative to a plain connection */
-	wireScale: 2.5,
+	wireScale: 2,
 	/** A bus wire starts this far inside its source port, which covers the wire end, so the thick line joins without a gap */
 	sourceInset: 4
 } as const;
