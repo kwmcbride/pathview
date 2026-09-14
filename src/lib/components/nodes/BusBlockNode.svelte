@@ -1,6 +1,13 @@
 <script lang="ts">
+	import { get } from 'svelte/store';
 	import { useUpdateNodeInternals } from '@xyflow/svelte';
-	import type { NodeInstance } from '$lib/nodes';
+	import type { NodeInstance, PortDirection } from '$lib/nodes';
+	import InlineInput from '$lib/components/InlineInput.svelte';
+	import { graphStore } from '$lib/stores/graph';
+	import { historyStore } from '$lib/stores/history';
+	import { inlineEdit, editInline } from '$lib/stores/inlineEdit.svelte';
+	import { busSelectorOptions } from '$lib/stores/busView.svelte';
+	import { selectedSignals } from '$lib/bus/expand';
 	import { NODE_TYPES } from '$lib/constants/nodeTypes';
 	import { BUS, busBlockDimensions } from '$lib/constants/dimensions';
 	import { openNodeDialog } from '$lib/stores/nodeDialog';
@@ -65,6 +72,42 @@
 		}
 	});
 
+	// Signal names are edited inline like connection labels, addressed as "<node>:<direction>:<index>"
+	const editingLabel = $derived(
+		inlineEdit.targetId?.startsWith(`${id}:`) ? inlineEdit.targetId.slice(id.length + 1) : null
+	);
+
+	const signalName = (direction: PortDirection, index: number) =>
+		direction === 'input'
+			? (busCreatorSignals.get(id)?.[index] ?? data.inputs[index]?.name ?? '')
+			: (data.outputs[index]?.name ?? '');
+
+	// A selector output offers the bus signals no other output picks yet
+	function signalOptions(index: number): string[] {
+		const picked = selectedSignals(data);
+		return (busSelectorOptions.get(id) ?? []).filter((path) => path === picked[index] || !picked.includes(path));
+	}
+
+	/**
+	 * A creator input names its signal with the label of the incoming wire, or
+	 * with its port name while nothing is connected. A selector output picks a
+	 * signal from the bus.
+	 */
+	function commitSignalName(direction: PortDirection, index: number, text: string) {
+		if (inlineEdit.targetId !== `${id}:${direction}:${index}`) return;
+		editInline(null);
+		const name = text.trim();
+		if (name === signalName(direction, index)) return;
+
+		if (direction === 'output') {
+			historyStore.mutate(() => graphStore.setSelectorSignal(id, index, name));
+			return;
+		}
+		const wire = get(graphStore.connections).find((c) => c.targetNodeId === id && c.targetPortIndex === index);
+		if (wire) historyStore.mutate(() => graphStore.updateConnectionLabel(wire.id, name));
+		else if (name) historyStore.mutate(() => graphStore.updateNodePortName(id, 'input', index, name));
+	}
+
 	let body = $state<HTMLDivElement | null>(null);
 
 	function handleMouseEnter() {
@@ -108,8 +151,22 @@
 		inputNames={isCreator ? busCreatorSignals.get(id) : undefined}
 		busInputs={isCreator ? undefined : [0]}
 		busOutputs={isCreator ? [0] : undefined}
+		signalLabels
+		{editingLabel}
+		onLabelEdit={(direction, index) => editInline(`${id}:${direction}:${index}`)}
+		{labelEditor}
 	/>
 </div>
+
+{#snippet labelEditor(direction: PortDirection, index: number)}
+	<InlineInput
+		value={signalName(direction, index)}
+		placeholder="Signal"
+		suggestions={direction === 'output' ? signalOptions(index) : undefined}
+		onCommit={(text) => commitSignalName(direction, index, text)}
+		onCancel={() => editInline(null)}
+	/>
+{/snippet}
 
 <style>
 	.bus-block {

@@ -30,13 +30,13 @@
 	import { routingStore } from '$lib/stores/routing';
 	import { graphStore } from '$lib/stores/graph';
 	import { edgeHighlights } from '$lib/stores/edgeHighlight';
-	import { edgeLabelEdit, editEdgeLabel } from '$lib/stores/edgeLabelEdit.svelte';
+	import { inlineEdit, editInline } from '$lib/stores/inlineEdit.svelte';
 	import { historyStore } from '$lib/stores/history';
 	import { screenToFlow } from '$lib/utils/viewUtils';
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
 	import InlineInput from '$lib/components/InlineInput.svelte';
 	import { BUS } from '$lib/constants/dimensions';
-	import { busWireSignals } from '$lib/stores/busView.svelte';
+	import { busWireSignals, busCreatorWires } from '$lib/stores/busView.svelte';
 	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
@@ -67,7 +67,7 @@
 	const ARROW_PATH = 'M -5 -2.5 L -1 -0.5 Q 0 0 -1 0.5 L -5 2.5 Q -6 3 -6 2 L -6 -2 Q -6 -3 -5 -2.5 Z';
 
 	/** Wider arrowhead for the thicker bus wire; its base overlaps the wire end */
-	const BUS_ARROW_PATH = 'M -8 -5 L -1 -0.8 Q 0 0 -1 0.8 L -8 5 Q -9 5.5 -9 4.5 L -9 -4.5 Q -9 -5.5 -8 -5 Z';
+	const BUS_ARROW_PATH = 'M -6 -3.75 L -1 -0.6 Q 0 0 -1 0.6 L -6 3.75 Q -7 4.2 -7 3.2 L -7 -3.2 Q -7 -4.2 -6 -3.75 Z';
 
 	/** Minimum distance of a segment midpoint handle from an existing waypoint */
 	const MIN_DISTANCE_FROM_WAYPOINT = 20;
@@ -315,7 +315,7 @@
 
 	// Connection label, shown on the middle of the longest route segment
 	const label = $derived((data as { label?: string } | undefined)?.label ?? '');
-	const isEditingLabel = $derived(edgeLabelEdit.connectionId === id);
+	const isEditingLabel = $derived(inlineEdit.targetId === id);
 
 	// Middle of the longest route segment, where the label and the bus signal count sit
 	const segmentAnchor = $derived.by(() => {
@@ -343,12 +343,12 @@
 
 	function handleEdgeDoubleClick(event: MouseEvent) {
 		event.stopPropagation();
-		editEdgeLabel(id);
+		editInline(id);
 	}
 
 	function commitLabel(text: string) {
-		if (edgeLabelEdit.connectionId !== id) return;
-		editEdgeLabel(null);
+		if (inlineEdit.targetId !== id) return;
+		editInline(null);
 		if (text.trim() === label) return;
 		historyStore.mutate(() => graphStore.updateConnectionLabel(id, text));
 	}
@@ -403,7 +403,7 @@
 <g
 	class:highlighted={highlightColor !== undefined}
 	class:bus-wire={busSignals !== undefined}
-	style="--bus-wire-width: {BUS.wireWidth}px;{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
+	style="{busSignals !== undefined ? `--wire-scale: ${BUS.wireScale};` : ''}{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
 	ondblclick={handleEdgeDoubleClick}
 >
 	<BaseEdge {id} {path} {style} />
@@ -460,8 +460,8 @@
 		>
 	{/if}
 
-	<!-- Labels on vertical segments read bottom to top along the wire -->
-	{#if label && !isEditingLabel && labelAnchor}
+	<!-- Labels on vertical segments read bottom to top along the wire; a wire into a Bus Creator shows its label at the creator port -->
+	{#if label && !isEditingLabel && labelAnchor && !busCreatorWires.has(id)}
 		<text
 			x={labelAnchor.x}
 			y={labelAnchor.y}
@@ -475,7 +475,7 @@
 
 {#if isEditingLabel && labelAnchor}
 	<EdgeLabel x={labelAnchor.x} y={labelAnchor.y} transparent>
-		<InlineInput value={label} placeholder="Label" onCommit={commitLabel} onCancel={() => editEdgeLabel(null)} />
+		<InlineInput value={label} placeholder="Label" onCommit={commitLabel} onCancel={() => editInline(null)} />
 	</EdgeLabel>
 {/if}
 
@@ -499,10 +499,6 @@
 
 	:global(.svelte-flow__edge:hover) .edge-arrow {
 		fill: var(--accent);
-	}
-
-	.bus-wire :global(.svelte-flow__edge-path) {
-		stroke-width: var(--bus-wire-width);
 	}
 
 	/* Highlight the edge path when handle is hovered */

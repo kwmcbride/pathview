@@ -56,8 +56,8 @@ export const BUS = {
 	blockWidth: G.x2,
 	/** Length of the narrow wedge side where the bus attaches: 2 grid units */
 	narrowSide: G.x2,
-	/** Line width of a wire carrying a bus in pixels */
-	wireWidth: 4,
+	/** Line width of a wire carrying a bus, relative to a plain connection */
+	wireScale: 2.5,
 	/** A bus wire starts this far inside its source port, where the solid port is wider than the wire */
 	sourceInset: 4,
 	/** Distance of the signal count from the wire in pixels */

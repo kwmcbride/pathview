@@ -1,6 +1,7 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { Handle, Position } from '@xyflow/svelte';
-	import type { PortInstance } from '$lib/nodes/types';
+	import type { PortDirection, PortInstance } from '$lib/nodes/types';
 	import { graphStore } from '$lib/stores/graph';
 	import { historyStore } from '$lib/stores/history';
 	import { hoveredHandle } from '$lib/stores/hoveredHandle';
@@ -32,6 +33,12 @@
 		/** Indices of ports carrying a bus, drawn with the bus handle */
 		busInputs?: number[];
 		busOutputs?: number[];
+		/** Labels are signal names: styled like connection labels and editable with a double-click */
+		signalLabels?: boolean;
+		/** Label being edited as "input:0" or "output:1", rendered by labelEditor */
+		editingLabel?: string | null;
+		onLabelEdit?: (direction: PortDirection, index: number) => void;
+		labelEditor?: Snippet<[PortDirection, number]>;
 	}
 
 	let {
@@ -49,8 +56,21 @@
 		minOutputs = 1,
 		inputNames,
 		busInputs,
-		busOutputs
+		busOutputs,
+		signalLabels = false,
+		editingLabel = null,
+		onLabelEdit,
+		labelEditor
 	}: Props = $props();
+
+	const isEditing = (direction: PortDirection, index: number) =>
+		labelEditor !== undefined && editingLabel === `${direction}:${index}`;
+
+	function handleLabelDoubleClick(event: MouseEvent, direction: PortDirection, index: number) {
+		if (!onLabelEdit) return;
+		event.stopPropagation();
+		onLabelEdit(direction, index);
+	}
 
 	// Actual visibility: setting is ON and ports exist (single source of truth)
 	const hasVisibleInputLabels = $derived(showInputLabels && inputs.length > 0);
@@ -184,23 +204,41 @@
      for the currently-hovered handle picks up the node accent color. -->
 {#if hasVisibleInputLabels}
 	{#each inputs as port, i}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<span
 			class="port-label"
+			class:signal={signalLabels}
+			class:editing={isEditing('input', i)}
+			class:nodrag={isEditing('input', i)}
 			class:hovered={$hoveredHandle?.handleId === port.id}
 			style={portLabelStyle(true, i, inputs.length)}
+			ondblclick={(e) => handleLabelDoubleClick(e, 'input', i)}
 		>
-			{truncatePortLabel(inputName(port, i))}
+			{#if isEditing('input', i)}
+				{@render labelEditor?.('input', i)}
+			{:else}
+				{truncatePortLabel(inputName(port, i))}
+			{/if}
 		</span>
 	{/each}
 {/if}
 {#if hasVisibleOutputLabels}
 	{#each outputs as port, i}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<span
 			class="port-label"
+			class:signal={signalLabels}
+			class:editing={isEditing('output', i)}
+			class:nodrag={isEditing('output', i)}
 			class:hovered={$hoveredHandle?.handleId === port.id}
 			style={portLabelStyle(false, i, outputs.length)}
+			ondblclick={(e) => handleLabelDoubleClick(e, 'output', i)}
 		>
-			{truncatePortLabel(port.name)}
+			{#if isEditing('output', i)}
+				{@render labelEditor?.('output', i)}
+			{:else}
+				{truncatePortLabel(port.name)}
+			{/if}
 		</span>
 	{/each}
 {/if}
@@ -277,6 +315,23 @@
 	.port-label.hovered {
 		color: var(--node-color, var(--accent));
 		font-weight: 500;
+	}
+
+	/* Signal names on bus blocks look like connection labels: UI font with a
+	 * halo in the canvas color. They take pointer events for the double-click. */
+	.port-label.signal {
+		font-family: var(--font-ui);
+		font-size: var(--font-xs);
+		font-weight: 400;
+		text-shadow: 0 0 2px var(--surface), 0 0 2px var(--surface), 0 0 2px var(--surface);
+		pointer-events: auto;
+		cursor: text;
+	}
+
+	.port-label.editing {
+		max-width: none;
+		overflow: visible;
+		text-shadow: none;
 	}
 
 	/* Port controls (+/- buttons) */

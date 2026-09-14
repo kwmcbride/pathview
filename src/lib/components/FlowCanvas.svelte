@@ -1051,10 +1051,10 @@
 		fill: var(--grid-dot);
 	}
 
-	/* Edge styling */
+	/* Edge styling; --wire-scale thickens a wire in every state, e.g. for buses */
 	:global(.svelte-flow__edge-path) {
 		stroke: var(--edge);
-		stroke-width: 1;
+		stroke-width: calc(1px * var(--wire-scale, 1));
 		transition: stroke 0.15s ease;
 		cursor: pointer;
 	}
@@ -1068,12 +1068,12 @@
 
 	:global(.svelte-flow__edge:hover .svelte-flow__edge-path) {
 		stroke: var(--accent, #0070C0);
-		stroke-width: 1;
+		stroke-width: calc(1px * var(--wire-scale, 1));
 	}
 
 	:global(.svelte-flow__edge.selected .svelte-flow__edge-path) {
 		stroke: var(--accent, #0070C0);
-		stroke-width: 1.5;
+		stroke-width: calc(1.5px * var(--wire-scale, 1));
 	}
 
 	/* Connection line */

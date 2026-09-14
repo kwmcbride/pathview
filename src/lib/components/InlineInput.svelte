@@ -24,10 +24,12 @@
 	// svelte-ignore state_referenced_locally
 	let text = $state(value);
 	let activeIndex = $state(0);
+	// Until the user types, the initial text does not filter and all suggestions are offered
+	let touched = $state(false);
 	let listPosition = $state<{ x: number; y: number } | null>(null);
 	let listEl = $state<HTMLElement | null>(null);
 
-	const query = $derived(text.trim());
+	const query = $derived(touched ? text.trim() : '');
 
 	// Matching suggestions, prefix matches first, then the create entry
 	const options = $derived.by((): Option[] => {
@@ -81,6 +83,7 @@
 			}
 		};
 		const onInput = () => {
+			touched = true;
 			activeIndex = 0;
 		};
 		const onPointerDown = (event: PointerEvent) => {

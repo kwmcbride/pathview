@@ -7,7 +7,40 @@ import { NODE_TYPES } from '$lib/constants/nodeTypes';
 import { selectedSignals } from '$lib/bus/expand';
 import { queueRemoveConnection } from '$lib/pyodide/mutationQueue';
 import { createPorts } from './helpers';
-import { getCurrentGraph, updateCurrentNodesAndConnections } from './state';
+import { getCurrentGraph, updateCurrentNodes, updateCurrentNodesAndConnections } from './state';
+
+/**
+ * Set the signal one Bus Selector output picks. The output keeps its wires.
+ * A signal another output already picks is ignored.
+ */
+export function setSelectorSignal(nodeId: string, index: number, signal: string): void {
+	const node = getCurrentGraph().nodes.get(nodeId);
+	if (!node || node.type !== NODE_TYPES.BUS_SELECTOR) return;
+	const signals = selectedSignals(node);
+	const path = signal.trim();
+	if (!path || index >= signals.length || signals[index] === path || signals.includes(path)) return;
+
+	const next = signals.map((s, i) => (i === index ? path : s));
+	const update = (n: NodeInstance): NodeInstance =>
+		n.id === nodeId
+			? {
+					...n,
+					params: { ...n.params, signals: next },
+					outputs: n.outputs.map((port, i) => (i === index ? { ...port, name: path } : port))
+				}
+			: n;
+
+	updateCurrentNodes(
+		(nodes) => {
+			const current = nodes.get(nodeId);
+			if (!current) return nodes;
+			const updated = new Map(nodes);
+			updated.set(nodeId, update(current));
+			return updated;
+		},
+		(nodes) => nodes.map(update)
+	);
+}
 
 /**
  * Set the signals a Bus Selector picks. Its outputs follow the list, one per

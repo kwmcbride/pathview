@@ -97,6 +97,7 @@ export const graphStore = {
 
 	// ==================== BUS BLOCK OPERATIONS ====================
 	setSelectedSignals: buses.setSelectedSignals,
+	setSelectorSignal: buses.setSelectorSignal,
 
 	// ==================== SUBSYSTEM EVENT OPERATIONS ====================
 	addSubsystemEvent: subsystemEvents.addSubsystemEvent,
