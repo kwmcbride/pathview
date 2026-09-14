@@ -23,6 +23,7 @@ This document is the authoritative reference for anyone building tools that read
   - [4.1 Subsystem Node](#41-subsystem-node)
   - [4.2 Interface Node](#42-interface-node)
   - [4.3 Nesting](#43-nesting)
+  - [4.4 Buses](#44-buses)
 - [5. Events](#5-events)
 - [6. Code Context](#6-code-context)
 - [7. Simulation Settings](#7-simulation-settings)
@@ -300,6 +301,26 @@ Interface node example:
 Subsystems can be nested arbitrarily deep. A subsystem's `graph.nodes` can contain other `Subsystem` nodes, each with their own `graph` and `Interface`.
 
 In PathSim Python code, subsystems map to `Subsystem(blocks=[...], connections=[...])` constructors. The Interface maps to `Interface()`. See `scripts/pvm2py.py` for a reference implementation.
+
+### 4.4 Buses
+
+`BusCreator` and `BusSelector` nodes group signals into one wire. They exist only in the editor: code generators resolve them before generating code and never emit them.
+
+| Node type | Ports | Params |
+|-----------|-------|--------|
+| `BusCreator` | Any number of inputs, one output carrying the bus. | none |
+| `BusSelector` | One input taking a bus, one output per picked signal. | `signals`: array of signal paths, one per output. |
+
+**Signal names.** Each Bus Creator input becomes a named element of the bus: the `label` of the incoming connection, else the name of the source port, else the input port name. Dots are replaced by underscores and repeated names get `_2`, `_3`, and so on. A bus fed into a Bus Creator becomes a nested bus; its signals are addressed with dotted paths such as `inner.b`. A path naming a nested bus selects the whole nested bus.
+
+**Resolution.** Code generators rewrite the model before generating code:
+
+- Bus Creator and Bus Selector nodes are removed, together with the connections into them.
+- Each connection out of a Bus Selector output is wired from the original source of the picked signal.
+- A subsystem port carrying a bus becomes one port index per leaf signal, in bus order, on the Subsystem and on its Interface. Port indices after it shift accordingly.
+- Wiring that cannot be resolved is left out: a bus into a block that is not a bus block or subsystem, a picked signal missing from the bus, or a wire loop through bus blocks.
+
+The reference implementations are `src/lib/bus/expand.ts` and `pathview/buses.py`; `tests/fixtures/bus_expansion.json` lists the expected wiring for each case.
 
 ---
 
