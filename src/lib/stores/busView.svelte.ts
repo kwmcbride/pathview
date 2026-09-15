@@ -9,10 +9,28 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Connection, NodeInstance } from '$lib/nodes/types';
 import { NODE_TYPES } from '$lib/constants/nodeTypes';
-import { analyzeBuses, containsBusBlocks, signalPaths } from '$lib/bus/expand';
+import {
+	analyzeBuses,
+	busWiringProblem,
+	containsBusBlocks,
+	signalPaths,
+	type BusAnalysis,
+	type BusLevel
+} from '$lib/bus/expand';
 
 /** Wires carrying a bus */
 export const busWires = new SvelteSet<string>();
+
+/** Wires breaking the bus rules: a bus into a plain block, or a plain signal into a Bus Selector */
+export const invalidBusWires = new SvelteSet<string>();
+
+/** Analysis of the model at the last update, reused to judge wires while connecting */
+let current: { analysis: BusAnalysis; level: BusLevel } | null = null;
+
+/** Whether a new wire from the source port to the target node keeps the bus rules */
+export function busWireAllowed(sourceNodeId: string, sourcePort: number, targetNodeId: string): boolean {
+	return !current || busWiringProblem(current.analysis, current.level, sourceNodeId, sourcePort, targetNodeId) === null;
+}
 
 /** Bus Creator ID to the signal name of each of its inputs */
 export const busCreatorSignals = new SvelteMap<string, string[]>();
@@ -60,12 +78,18 @@ export function updateBusView(
 	const ports = new Map<string, { inputs: number[]; outputs: number[] }>();
 	const selectorOptions = new Map<string, string[]>();
 	const creatorWires = new Set<string>();
+	const invalidWires = new Set<string>();
+	current = null;
 
 	if (containsBusBlocks(model.nodes)) {
 		const analysis = analyzeBuses(model.nodes, model.connections);
 		const level = analysis.levelAt(path);
 		if (level) {
+			current = { analysis, level };
 			for (const connection of connections) {
+				if (busWiringProblem(analysis, level, connection.sourceNodeId, connection.sourcePortIndex, connection.targetNodeId)) {
+					invalidWires.add(connection.id);
+				}
 				if (analysis.structureOut(level, connection.sourceNodeId, connection.sourcePortIndex)) wires.add(connection.id);
 				if (level.nodes.get(connection.targetNodeId)?.type === NODE_TYPES.BUS_CREATOR) creatorWires.add(connection.id);
 			}
@@ -82,6 +106,7 @@ export function updateBusView(
 	}
 
 	syncSet(busWires, wires);
+	syncSet(invalidBusWires, invalidWires);
 	sync(busCreatorSignals, creators, sameNames);
 	sync(busPorts, ports, (a, b) => sameIndices(a.inputs, b.inputs) && sameIndices(a.outputs, b.outputs));
 	sync(busSelectorOptions, selectorOptions, sameNames);

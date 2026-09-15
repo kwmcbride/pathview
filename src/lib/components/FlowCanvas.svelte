@@ -39,7 +39,9 @@
 	import { GRID_SIZE, SNAP_GRID, BACKGROUND_GAP } from '$lib/constants/grid';
 	import { createRoutingSync } from './canvas/routingSync';
 	import { isBusBlock } from '$lib/bus/expand';
-	import { updateBusView } from '$lib/stores/busView.svelte';
+	import { busWireAllowed, updateBusView } from '$lib/stores/busView.svelte';
+	import { endConnectionDrag, startConnectionDrag } from '$lib/stores/connectionDrag.svelte';
+	import { HANDLE_ID } from '$lib/constants/handles';
 	import BusBlockNode from './nodes/BusBlockNode.svelte';
 	import { createEdgeHighlighter } from '$lib/stores/edgeHighlight';
 	import { CANVAS_MIN_ZOOM } from '$lib/constants/layout';
@@ -778,6 +780,25 @@
 		isSyncing = false;
 	}
 
+	// Highlight the ports that can take a wire while it is dragged from a port
+	function handleConnectStart(
+		_event: MouseEvent | TouchEvent,
+		params: { nodeId: string | null; handleId: string | null; handleType: 'source' | 'target' | null }
+	) {
+		if (!params.nodeId || !params.handleId || !params.handleType) return;
+		const isOutput = params.handleType === 'source';
+		const port = HANDLE_ID.parseIndex(params.handleId, isOutput ? 'output' : 'input');
+		if (port === null) return;
+		const occupied = new Set(get(graphStore.connections).map((c) => `${c.targetNodeId}:${c.targetPortIndex}`));
+		startConnectionDrag({ nodeId: params.nodeId, port, isOutput }, occupied);
+	}
+
+	// A bus may only enter bus blocks and subsystem ports, and a Bus Selector only takes a bus
+	function isValidConnection(connection: FlowConnection | Edge): boolean {
+		const sourcePort = HANDLE_ID.parseIndex(connection.sourceHandle ?? '', 'output');
+		return sourcePort === null || busWireAllowed(connection.source, sourcePort, connection.target);
+	}
+
 	// Handle new connections
 	function handleConnect(connection: FlowConnection) {
 		if (!connection.source || !connection.target) return;
@@ -973,6 +994,11 @@
 		{nodeTypes}
 		{edgeTypes}
 		onconnect={readonly ? undefined : handleConnect}
+		{isValidConnection}
+		onconnectstart={readonly ? undefined : handleConnectStart}
+		onconnectend={readonly ? undefined : endConnectionDrag}
+		onclickconnectstart={readonly ? undefined : handleConnectStart}
+		onclickconnectend={readonly ? undefined : endConnectionDrag}
 		onnodedragstart={readonly ? undefined : handleNodeDragStart}
 		onnodedrag={readonly ? undefined : handleNodeDrag}
 		onnodedragstop={readonly ? undefined : handleNodeDragStop}
