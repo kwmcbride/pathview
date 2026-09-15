@@ -5,6 +5,7 @@
 	import { graphStore } from '$lib/stores/graph';
 	import { historyStore } from '$lib/stores/history';
 	import { hoveredHandle } from '$lib/stores/hoveredHandle';
+	import { canTakeDraggedWire } from '$lib/stores/connectionDrag.svelte';
 	import { showTooltip, hideTooltip } from '$lib/components/Tooltip.svelte';
 	import { getPortPositionCalc } from '$lib/constants/dimensions';
 	import { truncatePortLabel } from '$lib/utils/portLabels';
@@ -80,7 +81,8 @@
 
 	const handleClass = (direction: 'input' | 'output', index: number) => {
 		const bus = (direction === 'input' ? busInputs : busOutputs)?.includes(index);
-		return `handle handle-${direction}${bus ? ' handle-bus' : ''}`;
+		const connectable = canTakeDraggedWire(id, index, direction === 'output');
+		return `handle handle-${direction}${bus ? ' handle-bus' : ''}${connectable ? ' handle-connectable' : ''}`;
 	};
 
 	// Calculate actual port positions based on rotation
@@ -395,6 +397,11 @@
 	.port-btn:disabled {
 		opacity: 0.3;
 		cursor: not-allowed;
+	}
+
+	/* While a wire is dragged, ports that can take it show their outline in the accent color, still hollow */
+	:global(.node .svelte-flow__handle.handle-connectable::before) {
+		background: var(--accent);
 	}
 
 	/* Ports carrying a bus: the same arrow as other ports with a heavier outline,
