@@ -46,7 +46,7 @@
 	import { createEdgeHighlighter } from '$lib/stores/edgeHighlight';
 	import { CANVAS_MIN_ZOOM } from '$lib/constants/layout';
 	import { shallowEqualArray, shallowEqualRecord } from '$lib/utils/shallowEqual';
-	import type { NodeInstance, Connection, Annotation } from '$lib/nodes/types';
+	import type { NodeInstance, Connection, Annotation, PortInstance } from '$lib/nodes/types';
 	import type { EventInstance } from '$lib/events/types';
 
 	// Canvas utilities
@@ -150,6 +150,10 @@
 
 	// Track port counts to detect changes - used to force node re-renders
 	let portCounts = new Map<string, { inputs: number; outputs: number }>();
+
+	/** Port names by position; Interface ports are derived anew on every read, so references can't be compared */
+	const samePortNames = (a: PortInstance[], b: PortInstance[]) =>
+		a.length === b.length && a.every((port, i) => port.name === b[i].name);
 
 	// Track nodes that need internal updates (will be processed by FlowUpdater)
 	let pendingNodeUpdates: string[] = $state([]);
@@ -455,6 +459,7 @@
 			}
 			if (currentData.name !== gn.name) return true;
 			if (currentData.color !== gn.color) return true;
+			if (!samePortNames(currentData.inputs, gn.inputs) || !samePortNames(currentData.outputs, gn.outputs)) return true;
 			if (!shallowEqualRecord(currentData.params, gn.params)) return true;
 			if (!shallowEqualArray(currentData.pinnedParams, gn.pinnedParams)) return true;
 			return false;
