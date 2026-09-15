@@ -399,9 +399,9 @@
 		cursor: not-allowed;
 	}
 
-	/* While a wire is dragged, ports that can take it show their outline in the accent color, still hollow */
+	/* While a wire is dragged, ports that can take it show their outline in the block color, still hollow */
 	:global(.node .svelte-flow__handle.handle-connectable::before) {
-		background: var(--accent);
+		background: var(--node-color, var(--accent));
 	}
 
 	/* Ports carrying a bus: the same arrow as other ports with a heavier outline,
