@@ -39,7 +39,8 @@
 	import { GRID_SIZE, SNAP_GRID, BACKGROUND_GAP } from '$lib/constants/grid';
 	import { createRoutingSync } from './canvas/routingSync';
 	import { isBusBlock } from '$lib/bus/expand';
-	import { updateBusView } from '$lib/stores/busView.svelte';
+	import { busWireAllowed, updateBusView } from '$lib/stores/busView.svelte';
+	import { HANDLE_ID } from '$lib/constants/handles';
 	import BusBlockNode from './nodes/BusBlockNode.svelte';
 	import { createEdgeHighlighter } from '$lib/stores/edgeHighlight';
 	import { CANVAS_MIN_ZOOM } from '$lib/constants/layout';
@@ -778,6 +779,12 @@
 		isSyncing = false;
 	}
 
+	// A bus may only enter bus blocks and subsystem ports, and a Bus Selector only takes a bus
+	function isValidConnection(connection: FlowConnection | Edge): boolean {
+		const sourcePort = HANDLE_ID.parseIndex(connection.sourceHandle ?? '', 'output');
+		return sourcePort === null || busWireAllowed(connection.source, sourcePort, connection.target);
+	}
+
 	// Handle new connections
 	function handleConnect(connection: FlowConnection) {
 		if (!connection.source || !connection.target) return;
@@ -973,6 +980,7 @@
 		{nodeTypes}
 		{edgeTypes}
 		onconnect={readonly ? undefined : handleConnect}
+		{isValidConnection}
 		onnodedragstart={readonly ? undefined : handleNodeDragStart}
 		onnodedrag={readonly ? undefined : handleNodeDrag}
 		onnodedragstop={readonly ? undefined : handleNodeDragStop}

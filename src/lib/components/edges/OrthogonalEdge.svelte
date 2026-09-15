@@ -36,7 +36,7 @@
 	import { GRID_SIZE, EDGE_SOURCE_OFFSET, EDGE_TARGET_OFFSET, EDGE_CORNER_RADIUS } from '$lib/routing/constants';
 	import InlineInput from '$lib/components/InlineInput.svelte';
 	import { BUS } from '$lib/constants/dimensions';
-	import { busWires, busCreatorWires } from '$lib/stores/busView.svelte';
+	import { busWires, busCreatorWires, invalidBusWires } from '$lib/stores/busView.svelte';
 	import type { Direction, RouteResult } from '$lib/routing';
 	import type { Waypoint } from '$lib/types/nodes';
 
@@ -200,6 +200,9 @@
 	// Path ends at the handle tips: small inset at the source, room for the arrowhead at the target
 	// Wires carrying a bus are drawn thicker
 	const carriesBus = $derived(busWires.has(id));
+
+	// Wires breaking the bus rules are drawn as errors
+	const breaksBusRules = $derived(invalidBusWires.has(id));
 
 	// A bus wire starts inside the solid bus port, so the thick line joins it without a gap
 	const adjustedSource = $derived(
@@ -403,6 +406,7 @@
 <g
 	class:highlighted={highlightColor !== undefined}
 	class:bus-wire={carriesBus}
+	class:invalid-bus={breaksBusRules}
 	style="{carriesBus ? `--wire-scale: ${BUS.wireScale};` : ''}{highlightColor !== undefined ? ` --highlight-color: ${highlightColor};` : ''}"
 	ondblclick={handleEdgeDoubleClick}
 >
@@ -487,6 +491,16 @@
 
 	:global(.svelte-flow__edge:hover) .edge-arrow {
 		fill: var(--accent);
+	}
+
+	/* A wire breaking the bus rules: dashed in the error color, in every state */
+	.invalid-bus :global(.svelte-flow__edge-path) {
+		stroke: var(--error) !important;
+		stroke-dasharray: 4 3;
+	}
+
+	.invalid-bus .edge-arrow {
+		fill: var(--error) !important;
 	}
 
 	/* Highlight the edge path when handle is hovered */

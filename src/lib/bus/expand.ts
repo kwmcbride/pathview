@@ -209,6 +209,38 @@ export function analyzeBuses(nodes: NodeInstance[], connections: Connection[]) {
 	return { root, levelAt, structureIn, structureOut, elementNames };
 }
 
+export type BusAnalysis = ReturnType<typeof analyzeBuses>;
+
+/** Why a wire breaks the bus rules */
+export type BusWiringProblem = 'bus-into-block' | 'signal-into-selector';
+
+/**
+ * A bus may only enter a Bus Creator, a Bus Selector or a subsystem port, and a
+ * Bus Selector only takes a bus. Returns the rule a wire from the source port to
+ * the target node breaks, or null if it keeps them.
+ */
+export function busWiringProblem(
+	analysis: BusAnalysis,
+	level: BusLevel,
+	sourceNodeId: string,
+	sourcePort: number,
+	targetNodeId: string
+): BusWiringProblem | null {
+	const target = level.nodes.get(targetNodeId);
+	if (!target) return null;
+	const carriesBus = analysis.structureOut(level, sourceNodeId, sourcePort) !== null;
+	switch (target.type) {
+		case NODE_TYPES.BUS_CREATOR:
+		case NODE_TYPES.SUBSYSTEM:
+		case NODE_TYPES.INTERFACE:
+			return null;
+		case NODE_TYPES.BUS_SELECTOR:
+			return carriesBus ? null : 'signal-into-selector';
+		default:
+			return carriesBus ? 'bus-into-block' : null;
+	}
+}
+
 /**
  * The model without bus blocks, for code generation. Models without bus blocks
  * are returned unchanged. Connections that carry several signals are split,
